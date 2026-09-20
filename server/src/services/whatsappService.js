@@ -12,7 +12,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const AUTH_DIR = path.resolve(__dirname, '../../.wwebjs_auth');
 
-// Helper to find Chrome/Edge executable on Windows
+// Helper to locate Chrome/Edge on Windows
 function getChromeExecutablePath() {
   if (process.env.PUPPETEER_EXECUTABLE_PATH) {
     return process.env.PUPPETEER_EXECUTABLE_PATH;
@@ -29,21 +29,22 @@ function getChromeExecutablePath() {
         return candidate;
       }
     } catch {
-      // Ignore filesystem access errors
+      // Ignore
     }
   }
   return undefined;
 }
 
-// Connection States exactly matching user specification
+// Exactly the connection states requested by the user:
+// Disconnected | Initializing | Waiting for QR | QR Ready | Authenticating | Connected | Error
 export const ConnectionState = {
-  DISCONNECTED: 'DISCONNECTED',     // 🔴 Not Connected
-  CONNECTING: 'CONNECTING',         // 🟡 Connecting
-  QR_READY: 'QR_READY',             // 📱 Scan QR Code
-  AUTHENTICATING: 'AUTHENTICATING', // 🔵 Authenticating
-  CONNECTED: 'CONNECTED',           // 🟢 Connected
-  AUTH_FAILURE: 'AUTH_FAILURE',     // 🔴 WhatsApp authentication failed
-  ERROR: 'ERROR'                    // ⚠️ Connection Error
+  DISCONNECTED: 'Disconnected',
+  INITIALIZING: 'Initializing',
+  WAITING_FOR_QR: 'Waiting for QR',
+  QR_READY: 'QR Ready',
+  AUTHENTICATING: 'Authenticating',
+  CONNECTED: 'Connected',
+  ERROR: 'Error'
 };
 
 class WhatsAppService {
@@ -54,23 +55,23 @@ class WhatsAppService {
     this.qrDataUrl = null;
     this.accountInfo = null;
     this.lastError = null;
+    this.qrTimeout = null;
     this.listeners = new Set();
-    this.isInitializing = false;
+    this.isStarting = false;
 
     this.customMessage =
       'You are pre-qualified for an IDFC FIRST Bank loan. If you’re interested, please contact me.';
 
-    // Ensure session directory exists
     try {
       if (!fs.existsSync(AUTH_DIR)) {
         fs.mkdirSync(AUTH_DIR, { recursive: true });
       }
     } catch (e) {
-      console.warn('Session directory warning:', e.message);
+      console.warn('[WhatsApp] Session directory warning:', e.message);
     }
   }
 
-  // Real-time notification system for Server-Sent Events (SSE)
+  // Real-time notification system for SSE
   subscribe(listener) {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
@@ -82,7 +83,7 @@ class WhatsAppService {
       try {
         listener(payload);
       } catch (err) {
-        console.error('SSE subscriber notification error:', err);
+        console.error('[WhatsApp] Listener notification error:', err);
       }
     }
   }
@@ -108,34 +109,33 @@ class WhatsAppService {
     };
   }
 
-  // Connect & Initialize real WhatsApp Web client
+  // Initialize and connect real WhatsApp Web client
   async connect() {
-    // If already connected, return current status
     if (this.state === ConnectionState.CONNECTED && this.client) {
       return this.getStatus();
     }
 
-    // If currently initializing, wait for it
-    if (this.isInitializing) {
+    if (this.isStarting) {
       return this.getStatus();
     }
 
-    // Cleanly destroy any previous instance before creating a new one
+    // Cleanly tear down any previous or stalled client
     await this.destroyClient();
 
-    this.isInitializing = true;
-    this.state = ConnectionState.CONNECTING;
+    this.isStarting = true;
+    this.lastError = null;
     this.rawQr = null;
     this.qrDataUrl = null;
-    this.lastError = null;
+
+    console.log('[WhatsApp] Starting client');
+    console.log('[WhatsApp] Initializing browser');
+    this.state = ConnectionState.INITIALIZING;
     this.notify();
 
     try {
-      console.log('🔄 Initializing real WhatsApp Web Client (whatsapp-web.js)...');
-
       const executablePath = getChromeExecutablePath();
       if (executablePath) {
-        console.log(`🧭 Using browser executable at: ${executablePath}`);
+        console.log(`[WhatsApp] Browser executable: ${executablePath}`);
       }
 
       this.client = new Client({
@@ -153,20 +153,45 @@ class WhatsAppService {
             '--disable-accelerated-2d-canvas',
             '--no-first-run',
             '--no-zygote',
-            '--disable-gpu'
-          ]
+            '--disable-gpu',
+            '--disable-extensions'
+          ],
+          timeout: 60000
         }
       });
 
-      // 1. QR Code Event: Real payload from WhatsApp Web session
+      console.log('[WhatsApp] Waiting for QR');
+      this.state = ConnectionState.WAITING_FOR_QR;
+      this.notify();
+
+      // 60-second QR Generation Timeout Guard
+      this.qrTimeout = setTimeout(() => {
+        if (
+          this.state === ConnectionState.INITIALIZING ||
+          this.state === ConnectionState.WAITING_FOR_QR
+        ) {
+          console.error('[WhatsApp] Error: Timeout waiting for WhatsApp QR code');
+          this.state = ConnectionState.ERROR;
+          this.lastError = 'Unable to generate WhatsApp QR. Please click Retry Connection.';
+          this.notify();
+          this.destroyClient().catch(() => {});
+        }
+      }, 60000);
+
+      // Event 1: Real QR Event from WhatsApp Web
       this.client.on('qr', async (qr) => {
-        console.log('📱 Real WhatsApp Web QR received from WhatsApp servers.');
+        if (this.qrTimeout) {
+          clearTimeout(this.qrTimeout);
+          this.qrTimeout = null;
+        }
+
+        console.log('[WhatsApp] QR received');
+        console.log('[WhatsApp] Waiting for scan');
         this.rawQr = qr;
         this.state = ConnectionState.QR_READY;
         this.lastError = null;
 
         try {
-          // Convert raw payload to high-res Base64 Data URL for frontend
           this.qrDataUrl = await QRCode.toDataURL(qr, {
             errorCorrectionLevel: 'M',
             margin: 2,
@@ -177,16 +202,21 @@ class WhatsAppService {
             }
           });
         } catch (qrErr) {
-          console.error('Error generating QR Data URL:', qrErr);
+          console.error('[WhatsApp] Error creating QR image Data URL:', qrErr);
           this.qrDataUrl = null;
         }
 
         this.notify();
       });
 
-      // 2. Authenticating Event
+      // Event 2: Authentication in progress
       this.client.on('authenticated', () => {
-        console.log('🔵 WhatsApp Web credentials verified. Authenticating...');
+        if (this.qrTimeout) {
+          clearTimeout(this.qrTimeout);
+          this.qrTimeout = null;
+        }
+
+        console.log('[WhatsApp] Authentication received');
         this.state = ConnectionState.AUTHENTICATING;
         this.rawQr = null;
         this.qrDataUrl = null;
@@ -194,9 +224,14 @@ class WhatsAppService {
         this.notify();
       });
 
-      // 3. Ready Event: Connection completed and ready for outreach
+      // Event 3: Client Ready & Fully Authenticated
       this.client.on('ready', async () => {
-        console.log('🟢 WhatsApp Web Client is READY and CONNECTED.');
+        if (this.qrTimeout) {
+          clearTimeout(this.qrTimeout);
+          this.qrTimeout = null;
+        }
+
+        console.log('[WhatsApp] Client ready');
         this.state = ConnectionState.CONNECTED;
         this.rawQr = null;
         this.qrDataUrl = null;
@@ -210,7 +245,7 @@ class WhatsAppService {
             device: info.platform || 'WhatsApp Web',
             connectedAt: new Date().toISOString()
           };
-        } catch (e) {
+        } catch {
           this.accountInfo = {
             name: 'IDFC FIRST Loan Officer',
             number: '+91 98201 23456',
@@ -222,96 +257,114 @@ class WhatsAppService {
         this.notify();
       });
 
-      // 4. Authentication Failure
+      // Event 4: Authentication failure
       this.client.on('auth_failure', (msg) => {
-        console.error('🔴 WhatsApp authentication failed:', msg);
-        this.state = ConnectionState.AUTH_FAILURE;
+        if (this.qrTimeout) {
+          clearTimeout(this.qrTimeout);
+          this.qrTimeout = null;
+        }
+
+        console.error('[WhatsApp] Error: Auth failure:', msg);
+        this.state = ConnectionState.ERROR;
         this.rawQr = null;
         this.qrDataUrl = null;
-        this.lastError = `Authentication failed: ${msg}`;
+        this.lastError = `WhatsApp authentication failed: ${msg}`;
         this.notify();
       });
 
-      // 5. Disconnected / Logout
+      // Event 5: Disconnected
       this.client.on('disconnected', async (reason) => {
-        console.log('🔴 WhatsApp Web Client was disconnected. Reason:', reason);
+        console.log('[WhatsApp] Disconnected:', reason);
         this.state = ConnectionState.DISCONNECTED;
         this.rawQr = null;
         this.qrDataUrl = null;
         this.accountInfo = null;
-        this.lastError = `Session disconnected: ${reason}`;
-        await this.destroyClient();
+        this.lastError = `Disconnected: ${reason}`;
+        if (this.client) {
+          try {
+            this.client.removeAllListeners();
+          } catch {}
+          this.client = null;
+        }
+        this.isStarting = false;
         this.notify();
       });
 
-      // Initialize the client
+      // Start client
       this.client.initialize().catch((initErr) => {
-        console.error('❌ WhatsApp Web initialize error:', initErr);
+        console.error('[WhatsApp] Error during initialize:', initErr?.message || initErr);
         this.state = ConnectionState.ERROR;
-        this.lastError = initErr.message || 'Failed to initialize WhatsApp browser session';
-        this.isInitializing = false;
+        this.lastError = initErr?.message || 'Failed to initialize browser';
+        this.isStarting = false;
         this.notify();
       });
 
-      this.isInitializing = false;
+      this.isStarting = false;
       return this.getStatus();
     } catch (err) {
-      console.error('Failed to create WhatsApp client:', err);
+      console.error('[WhatsApp] Error:', err.message);
       this.state = ConnectionState.ERROR;
-      this.lastError = err.message || 'WhatsApp initialization failed';
-      this.isInitializing = false;
+      this.lastError = err.message || 'Unable to launch WhatsApp Web';
+      this.isStarting = false;
       this.notify();
       throw err;
     }
   }
 
-  // Destroy client cleanly
+  // Safely destroy client
   async destroyClient() {
+    if (this.qrTimeout) {
+      clearTimeout(this.qrTimeout);
+      this.qrTimeout = null;
+    }
     if (this.client) {
+      const c = this.client;
+      this.client = null;
       try {
-        console.log('🧹 Destroying previous WhatsApp client session...');
-        await this.client.destroy();
-      } catch (err) {
-        console.warn('Warning during client destroy:', err.message);
-      } finally {
-        this.client = null;
+        c.removeAllListeners();
+        await c.destroy().catch(() => {});
+      } catch (e) {
+        console.warn('[WhatsApp] Warning during destroy:', e.message);
       }
     }
-    this.isInitializing = false;
+    this.isStarting = false;
   }
 
-  // Disconnect & logout
+  // Explicit user disconnect
   async disconnect() {
+    console.log('[WhatsApp] Disconnected');
     try {
       if (this.client) {
+        const c = this.client;
+        this.client = null;
         try {
-          await this.client.logout();
-        } catch {
-          // Continue to destroy
-        }
-        await this.destroyClient();
+          c.removeAllListeners();
+          await c.logout().catch(() => {});
+          await c.destroy().catch(() => {});
+        } catch {}
       }
     } catch (err) {
-      console.error('Error during WhatsApp disconnect:', err);
+      console.warn('[WhatsApp] Error during disconnect:', err.message);
     } finally {
       this.state = ConnectionState.DISCONNECTED;
       this.rawQr = null;
       this.qrDataUrl = null;
       this.accountInfo = null;
       this.lastError = null;
+      this.isStarting = false;
       this.notify();
     }
     return this.getStatus();
   }
 
-  // Refresh QR code (destroy session and trigger fresh QR from WhatsApp Web)
+  // Refresh QR code
   async refreshQr() {
-    console.log('🔄 User requested WhatsApp QR refresh. Recreating session...');
+    console.log('[WhatsApp] Starting client (Refresh QR)');
     await this.disconnect();
     return this.connect();
   }
 
-  // Send message using the real WhatsApp Web client
+  // Send real WhatsApp message
   async sendMessage({ to, customerName = '', messageType = 'template', customMessage = null }) {
     if (this.state !== ConnectionState.CONNECTED || !this.client) {
       throw new Error('WhatsApp is not connected. Please scan the QR code to pair your device.');
@@ -321,7 +374,7 @@ class WhatsAppService {
     const cleanDigits = String(to).replace(/\D/g, '');
     const chatId = cleanDigits.includes('@c.us') ? cleanDigits : `${cleanDigits}@c.us`;
 
-    console.log(`📤 Dispatching WhatsApp message to ${chatId}...`);
+    console.log(`[WhatsApp] Dispatching message to ${chatId}...`);
     const sent = await this.client.sendMessage(chatId, messageText);
 
     return {

@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 
 export default function WhatsAppConnection({
-  connectionState = 'DISCONNECTED', // DISCONNECTED | CONNECTING | QR_READY | AUTHENTICATING | CONNECTED | AUTH_FAILURE | ERROR
+  connectionState = 'Disconnected', // Disconnected | Initializing | Waiting for QR | QR Ready | Authenticating | Connected | Error
   qrData = null,
   accountInfo = null,
   errorMessage = null,
@@ -21,17 +21,17 @@ export default function WhatsAppConnection({
   isModalOpen,
   setIsModalOpen
 }) {
-  const isConnected = connectionState === 'CONNECTED';
-  const isConnecting = connectionState === 'CONNECTING';
-  const isQrReady = connectionState === 'QR_READY';
-  const isAuthenticating = connectionState === 'AUTHENTICATING';
-  const isAuthFailure = connectionState === 'AUTH_FAILURE';
-  const isError = connectionState === 'ERROR';
-  const isDisconnected = connectionState === 'DISCONNECTED';
+  const isConnected = connectionState === 'Connected';
+  const isInitializing = connectionState === 'Initializing';
+  const isWaitingForQr = connectionState === 'Waiting for QR';
+  const isQrReady = connectionState === 'QR Ready';
+  const isAuthenticating = connectionState === 'Authenticating';
+  const isError = connectionState === 'Error';
+  const isDisconnected = connectionState === 'Disconnected';
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5 sm:p-6 space-y-4">
-      {/* Header with Title & Live Connection Status */}
+      {/* Header with Title & Real Connection State */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center space-x-3">
           <div
@@ -40,9 +40,9 @@ export default function WhatsAppConnection({
                 ? 'bg-emerald-600'
                 : isAuthenticating
                 ? 'bg-blue-600'
-                : isConnecting || isQrReady
+                : isInitializing || isWaitingForQr || isQrReady
                 ? 'bg-amber-500'
-                : isAuthFailure || isError
+                : isError
                 ? 'bg-rose-600'
                 : 'bg-slate-700'
             }`}
@@ -57,32 +57,32 @@ export default function WhatsAppConnection({
           </div>
         </div>
 
-        {/* Real Status Badge (Driven exclusively by backend state) */}
+        {/* Real Status Badge (Exclusively reflecting backend state) */}
         <div>
           {isConnected ? (
             <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-2xs">
               <span className="w-2 h-2 rounded-full bg-emerald-500 mr-1.5 animate-pulse"></span>
               <span>🟢 WhatsApp Connected</span>
             </span>
-          ) : isConnecting ? (
+          ) : isInitializing ? (
             <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200 shadow-2xs">
               <RefreshCw className="w-3 h-3 mr-1.5 animate-spin text-amber-600" />
-              <span>🟡 Connecting</span>
+              <span>🟡 Initializing</span>
+            </span>
+          ) : isWaitingForQr ? (
+            <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200 shadow-2xs">
+              <RefreshCw className="w-3 h-3 mr-1.5 animate-spin text-amber-600" />
+              <span>🟡 Waiting for QR</span>
             </span>
           ) : isQrReady ? (
             <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-bold bg-amber-50 text-amber-800 border border-amber-300 shadow-2xs">
               <QrCode className="w-3 h-3 mr-1.5 text-amber-600" />
-              <span>📱 Scan QR Code</span>
+              <span>📱 QR Ready</span>
             </span>
           ) : isAuthenticating ? (
             <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-bold bg-blue-50 text-blue-700 border border-blue-200 shadow-2xs">
               <RefreshCw className="w-3 h-3 mr-1.5 animate-spin text-blue-600" />
               <span>🔵 Authenticating</span>
-            </span>
-          ) : isAuthFailure ? (
-            <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200 shadow-2xs">
-              <AlertCircle className="w-3 h-3 mr-1.5 text-rose-600" />
-              <span>🔴 WhatsApp authentication failed</span>
             </span>
           ) : isError ? (
             <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200 shadow-2xs">
@@ -98,7 +98,7 @@ export default function WhatsAppConnection({
         </div>
       </div>
 
-      {/* Connected Details or Connect Actions */}
+      {/* Connected Details or Connection Controls */}
       <div className="pt-2 flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-slate-100">
         {isConnected ? (
           <>
@@ -116,27 +116,19 @@ export default function WhatsAppConnection({
             <div className="flex items-center space-x-2 w-full sm:w-auto justify-end">
               <button
                 type="button"
-                onClick={onRefreshQr}
-                className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-colors flex items-center space-x-1.5"
-              >
-                <RefreshCw className="w-3.5 h-3.5" />
-                <span>Reconnect</span>
-              </button>
-              <button
-                type="button"
                 onClick={onDisconnect}
-                className="px-3.5 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold rounded-xl transition-colors flex items-center space-x-1.5"
+                className="px-4 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold rounded-xl transition-colors flex items-center space-x-1.5"
               >
                 <PowerOff className="w-3.5 h-3.5" />
                 <span>Disconnect WhatsApp</span>
               </button>
             </div>
           </>
-        ) : isAuthFailure ? (
+        ) : isError ? (
           <>
             <div className="text-xs text-rose-800">
-              <p className="font-bold">WhatsApp authentication failed</p>
-              <p className="text-rose-600 text-[11px]">{errorMessage || 'The QR code was rejected or timed out.'}</p>
+              <p className="font-bold">Unable to generate WhatsApp QR</p>
+              <p className="text-rose-600 text-[11px]">{errorMessage || 'Connection failed or timed out.'}</p>
             </div>
             <button
               type="button"
@@ -147,7 +139,35 @@ export default function WhatsAppConnection({
               className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl shadow-xs transition-colors flex items-center space-x-1.5"
             >
               <RefreshCw className="w-3.5 h-3.5" />
-              <span>Generate New QR</span>
+              <span>Retry Connection</span>
+            </button>
+          </>
+        ) : isInitializing || isWaitingForQr ? (
+          <>
+            <p className="text-xs text-slate-500">
+              Initializing WhatsApp Web session. Please wait...
+            </p>
+            <button
+              type="button"
+              onClick={() => setIsModalOpen(true)}
+              className="w-full sm:w-auto px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-xl shadow-xs transition-colors flex items-center justify-center space-x-1.5"
+            >
+              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              <span>View Connection</span>
+            </button>
+          </>
+        ) : isQrReady ? (
+          <>
+            <p className="text-xs text-slate-600 font-semibold">
+              QR Code is ready to scan.
+            </p>
+            <button
+              type="button"
+              onClick={() => setIsModalOpen(true)}
+              className="w-full sm:w-auto px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow-xs transition-colors flex items-center justify-center space-x-1.5"
+            >
+              <QrCode className="w-4 h-4" />
+              <span>Scan QR Code</span>
             </button>
           </>
         ) : (
@@ -170,17 +190,17 @@ export default function WhatsAppConnection({
         )}
       </div>
 
-      {/* Real QR Code Modal for "Link a Device" */}
+      {/* Real QR Code Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200 animate-in fade-in zoom-in duration-200">
-            {/* Header */}
+            {/* Modal Header */}
             <div className="bg-gradient-to-r from-[#9E1B32] to-[#7A1426] px-6 py-4 text-white flex items-center justify-between">
               <div className="flex items-center space-x-2.5">
                 <QrCode className="w-5 h-5 text-white" />
                 <div>
                   <h3 className="font-bold text-sm">Link WhatsApp Account</h3>
-                  <p className="text-[11px] text-red-100">Scan this QR code using WhatsApp</p>
+                  <p className="text-[11px] text-red-100">Scan QR to connect loan outreach device</p>
                 </div>
               </div>
               <button
@@ -209,8 +229,8 @@ export default function WhatsAppConnection({
                     <ExternalLink className="w-3 h-3" />
                   </a>
                 </div>
-                <p className="text-[11px] text-slate-500">
-                  1. Open WhatsApp on your phone &nbsp;•&nbsp; 2. Tap Menu (⋮) or Settings (⚙️) &nbsp;•&nbsp; 3. Select Linked Devices &nbsp;•&nbsp; 4. Tap "Link a Device" and scan
+                <p className="text-[11px] text-slate-500 leading-normal">
+                  Open WhatsApp on your phone &nbsp;•&nbsp; Tap Menu (⋮) or Settings (⚙️) &nbsp;•&nbsp; Select Linked Devices &nbsp;•&nbsp; Tap "Link a Device" and scan
                 </p>
               </div>
 
@@ -223,7 +243,7 @@ export default function WhatsAppConnection({
                       alt="Actual WhatsApp Web Pairing QR Code"
                       className="w-full h-full object-contain rounded-xl"
                     />
-                    {/* Centered Bank Icon */}
+                    {/* Centered Bank Branding */}
                     <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                       <div className="w-9 h-9 rounded-lg bg-white shadow-md border border-slate-200 flex items-center justify-center">
                         <span className="font-black text-xs text-[#9E1B32]">IDFC</span>
@@ -236,22 +256,24 @@ export default function WhatsAppConnection({
                     <p className="text-sm font-bold text-blue-900">🔵 Authenticating...</p>
                     <p className="text-xs text-slate-400">Verifying linked device credentials with WhatsApp...</p>
                   </div>
-                ) : isConnecting ? (
+                ) : isInitializing || isWaitingForQr ? (
                   <div className="flex flex-col items-center justify-center space-y-2 text-slate-600 p-4">
                     <RefreshCw className="w-10 h-10 text-[#9E1B32] animate-spin" />
-                    <p className="text-sm font-bold text-slate-900">🟡 Connecting to WhatsApp Web...</p>
+                    <p className="text-sm font-bold text-slate-900">
+                      {isInitializing ? '🟡 Initializing browser...' : '🟡 Waiting for QR...'}
+                    </p>
                     <p className="text-xs text-slate-400">Requesting pairing challenge from WhatsApp servers...</p>
                   </div>
-                ) : isAuthFailure ? (
+                ) : isError ? (
                   <div className="flex flex-col items-center justify-center space-y-2 text-slate-600 p-4">
                     <AlertCircle className="w-10 h-10 text-rose-600" />
-                    <p className="text-sm font-bold text-rose-800">🔴 WhatsApp authentication failed</p>
-                    <p className="text-xs text-slate-400">The session expired or was rejected by phone.</p>
+                    <p className="text-sm font-bold text-rose-800">Unable to generate WhatsApp QR</p>
+                    <p className="text-xs text-slate-400">{errorMessage || 'Connection timed out or failed.'}</p>
                   </div>
                 ) : (
                   <div className="flex flex-col items-center justify-center space-y-2 text-slate-500 p-4">
                     <QrCode className="w-10 h-10 text-slate-400 animate-pulse" />
-                    <p className="text-xs font-semibold">Initializing WhatsApp Web session...</p>
+                    <p className="text-xs font-semibold">Starting WhatsApp Web session...</p>
                   </div>
                 )}
               </div>
@@ -259,20 +281,31 @@ export default function WhatsAppConnection({
               {/* Status and Action Buttons */}
               <div className="space-y-2 pt-1">
                 {isQrReady && (
-                  <p className="text-xs font-semibold text-slate-600 animate-pulse">
+                  <p className="text-xs font-semibold text-slate-700 animate-pulse">
                     Waiting for scan...
                   </p>
                 )}
 
                 <div className="flex items-center justify-center space-x-3 pt-1">
-                  <button
-                    type="button"
-                    onClick={onRefreshQr}
-                    className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-colors inline-flex items-center space-x-1.5"
-                  >
-                    <RefreshCw className="w-3.5 h-3.5" />
-                    <span>Refresh QR</span>
-                  </button>
+                  {isError ? (
+                    <button
+                      type="button"
+                      onClick={onRefreshQr}
+                      className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl shadow-xs transition-colors inline-flex items-center space-x-1.5"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      <span>Retry Connection</span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={onRefreshQr}
+                      className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-colors inline-flex items-center space-x-1.5"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      <span>Refresh QR</span>
+                    </button>
+                  )}
                 </div>
               </div>
             </div>

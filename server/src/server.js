@@ -6,6 +6,14 @@ import { whatsappService } from './services/whatsappService.js';
 import { campaignQueue } from './services/campaignQueue.js';
 import { parseCustomerFile, sanitizePhoneNumber, maskPhoneNumber } from './services/fileParser.js';
 
+process.on('unhandledRejection', (reason) => {
+  console.warn('⚠️ Server unhandledRejection caught:', reason?.message || reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.warn('⚠️ Server uncaughtException caught:', err?.message || err);
+});
+
 const app = express();
 const PORT = process.env.PORT || 5000;
 

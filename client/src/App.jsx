@@ -25,7 +25,7 @@ function maskPhone(p) {
 export default function App() {
   // Real WhatsApp Connection State (Strictly from Backend)
   const [waConnection, setWaConnection] = useState({
-    state: 'DISCONNECTED', // DISCONNECTED | CONNECTING | QR_READY | AUTHENTICATING | CONNECTED | AUTH_FAILURE | ERROR
+    state: 'Disconnected', // Disconnected | Initializing | Waiting for QR | QR Ready | Authenticating | Connected | Error
     connected: false,
     qr: null,
     accountInfo: null,
@@ -75,6 +75,30 @@ export default function App() {
     }
   };
 
+  // Active state polling fallback (every 1.5s while connection is progressing)
+  useEffect(() => {
+    const activeStates = ['Initializing', 'Waiting for QR', 'Authenticating'];
+    if (!activeStates.includes(waConnection.state)) return;
+
+    const intervalId = setInterval(async () => {
+      try {
+        const res = await fetch('/api/whatsapp/status');
+        if (res.ok) {
+          const data = await res.json();
+          setWaConnection(data);
+          if (data.state === 'Connected') {
+            setIsQrModalOpen(false);
+            showNotification('success', '🟢 WhatsApp Connected! WhatsApp is ready.');
+          }
+        }
+      } catch {
+        // Backend offline
+      }
+    }, 1500);
+
+    return () => clearInterval(intervalId);
+  }, [waConnection.state]);
+
   // WhatsApp SSE stream listener (Backend is source of truth)
   useEffect(() => {
     fetchWhatsAppStatus();
@@ -88,11 +112,11 @@ export default function App() {
           setWaConnection(data);
 
           // When real authentication succeeds
-          if (data.state === 'CONNECTED') {
+          if (data.state === 'Connected' || data.connected) {
             setIsQrModalOpen(false);
             showNotification('success', '🟢 WhatsApp Connected! WhatsApp is ready.');
-          } else if (data.state === 'AUTH_FAILURE') {
-            showNotification('error', '🔴 WhatsApp authentication failed.');
+          } else if (data.state === 'Error') {
+            showNotification('error', data.error || 'Unable to generate WhatsApp QR');
           }
         } catch (err) {
           console.error('Error parsing WhatsApp SSE data:', err);
@@ -175,7 +199,7 @@ export default function App() {
       const res = await fetch('/api/whatsapp/disconnect', { method: 'POST' });
       if (res.ok) {
         const data = await res.json();
-        setWaConnection(data.status || { state: 'DISCONNECTED', connected: false, qr: null, accountInfo: null });
+        setWaConnection(data.status || { state: 'Disconnected', connected: false, qr: null, accountInfo: null, error: null });
         showNotification('info', 'WhatsApp disconnected.');
       }
     } catch {
@@ -398,6 +422,16 @@ export default function App() {
               <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
                 <span className="w-2 h-2 rounded-full bg-emerald-500 mr-1.5 animate-pulse"></span>
                 🟢 Connected
+              </span>
+            ) : waConnection.state === 'Initializing' || waConnection.state === 'Waiting for QR' || waConnection.state === 'Authenticating' ? (
+              <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                <span className="w-2 h-2 rounded-full bg-amber-500 mr-1.5 animate-pulse"></span>
+                🟡 Connecting
+              </span>
+            ) : waConnection.state === 'QR Ready' ? (
+              <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-800 border border-amber-300">
+                <span className="w-2 h-2 rounded-full bg-amber-500 mr-1.5"></span>
+                📱 QR Ready
               </span>
             ) : (
               <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200">
