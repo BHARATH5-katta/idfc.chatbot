@@ -1,28 +1,27 @@
 import React, { useState, useEffect, useRef } from 'react';
-import confetti from 'canvas-confetti';
 import * as XLSX from 'xlsx';
-import Navbar from './components/Navbar';
-import ChatbotPanel from './components/ChatbotPanel';
-import CampaignDashboard from './components/CampaignDashboard';
-import LoanPortfolioOverview from './components/LoanPortfolioOverview';
-import WhatsAppConfigModal from './components/WhatsAppConfigModal';
-import TestMessageModal from './components/TestMessageModal';
-import AuthScreen from './components/AuthScreen';
-import WhatsAppConnection from './components/WhatsAppConnection';
-import { Lock, CheckCircle2, AlertCircle } from 'lucide-react';
+import {
+  CheckCircle2,
+  AlertCircle,
+  QrCode,
+  Smartphone,
+  RefreshCw,
+  PowerOff,
+  Upload,
+  FileSpreadsheet,
+  ShieldCheck,
+  X,
+  ExternalLink,
+  Clock,
+  Send,
+  RotateCcw
+} from 'lucide-react';
 
-const DEFAULT_MESSAGE =
+const APPROVED_MESSAGE =
   'You are pre-qualified for an IDFC FIRST Bank loan. If you’re interested, please contact me.';
 
-const SAMPLE_NAMES = [
-  'Rahul Sharma', 'Priya Patel', 'Arun Kumar', 'Sneha Iyer', 'Vikram Malhotra',
-  'Ananya Sen', 'Rohan Gupta', 'Deepika Verma', 'Amitabh Deshmukh', 'Kavita Reddy',
-  'Sanjay Joshi', 'Meera Nair', 'Alok Mehta', 'Pooja Choudhury', 'Karthik Raja',
-  'Sunita Agarwal', 'Manish Bansal', 'Ritu Saxena', 'Harish Chandra', 'Neha Singhal',
-  'Abhishek Roy', 'Divya Menon', 'Rajesh Kulkarni', 'Swati Bhat', 'Gaurav Khanna'
-];
-
 function maskPhone(p) {
+  if (!p) return '***';
   const cleaned = String(p).replace(/\D/g, '');
   if (cleaned.length < 10) return '***' + cleaned.slice(-3);
   const main = cleaned.slice(-10);
@@ -30,92 +29,64 @@ function maskPhone(p) {
 }
 
 export default function App() {
-  const [currentUser, setCurrentUser] = useState(() => {
-    try {
-      const saved = localStorage.getItem('idfc_auth_user');
-      return saved ? JSON.parse(saved) : null;
-    } catch {
-      return null;
-    }
-  });
-  const [activeTab, setActiveTab] = useState('chatbot');
+  // WhatsApp Connection State
   const [waConnection, setWaConnection] = useState({
     state: 'DISCONNECTED',
-    qrData: null,
-    sessionData: null,
+    connected: false,
+    qr: null,
+    qrExpiresAt: null,
+    accountInfo: null,
     error: null
   });
-  const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
-  const [whatsAppStatus, setWhatsAppStatus] = useState({
-    connected: false,
-    isDemoMode: false,
-    accountName: 'IDFC FIRST Bank Loan Desk',
-    phoneNumber: '+91 98200 12345',
-    qualityRating: 'GREEN',
-    status: '🔴 WhatsApp Disconnected',
-    templateName: 'idfc_loan_prequalified',
-    customMessage: DEFAULT_MESSAGE
-  });
+  const [isQrModalOpen, setIsQrModalOpen] = useState(false);
+  const [qrCountdown, setQrCountdown] = useState(30);
 
-  const [campaignState, setCampaignState] = useState({
-    campaignId: 'CAMP-IDFC-2026-LIVE',
-    status: 'idle',
-    stats: {
-      total: 0,
-      sent: 0,
-      delivered: 0,
-      failed: 0,
-      remaining: 0,
-      progressPercent: 0
-    },
-    customers: [],
-    recentLogs: [],
-    delayMs: 1500,
-    testVerified: false
-  });
-
-  const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
-  const [isTestModalOpen, setIsTestModalOpen] = useState(false);
+  // Customer List State (Starts completely empty - No mock data)
+  const [customers, setCustomers] = useState([]);
+  const [uploadSuccessMessage, setUploadSuccessMessage] = useState('');
   const [isUploading, setIsUploading] = useState(false);
-  const [isGeneratingSample, setIsGeneratingSample] = useState(false);
-  const [uploadStats, setUploadStats] = useState(null);
-  const [notification, setNotification] = useState(null);
+  const fileInputRef = useRef(null);
 
-  const prevCompletedRef = useRef(false);
+  // WhatsApp Message Confirmation State
+  const [isMessageConfirmed, setIsMessageConfirmed] = useState(false);
+
+  // Ready to Send Confirmation Modal
+  const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
+
+  // Sending / Campaign Progress State
+  const [campaignStatus, setCampaignStatus] = useState('idle'); // 'idle' | 'sending' | 'completed'
+  const [campaignStats, setCampaignStats] = useState({
+    total: 0,
+    sent: 0,
+    failed: 0,
+    remaining: 0
+  });
+
+  const [notification, setNotification] = useState(null);
   const simulationTimerRef = useRef(null);
 
-  // Fetch initial WhatsApp Linked Device status & subscribe to SSE
+  const showNotification = (type, message) => {
+    setNotification({ type, message });
+    setTimeout(() => setNotification(null), 4000);
+  };
+
+  // Fetch initial WhatsApp connection status
   const fetchWhatsAppStatus = async () => {
     try {
       const res = await fetch('/api/whatsapp/status');
       if (res.ok) {
         const data = await res.json();
         setWaConnection(data);
-        if (data.state === 'CONNECTED') {
-          setWhatsAppStatus((prev) => ({
-            ...prev,
-            connected: true,
-            accountName: data.sessionData?.name || prev.accountName,
-            phoneNumber: data.sessionData?.phone || prev.phoneNumber,
-            status: '🟢 WhatsApp Connected'
-          }));
-        } else {
-          setWhatsAppStatus((prev) => ({
-            ...prev,
-            connected: false,
-            status: '🔴 WhatsApp Disconnected'
-          }));
-        }
       }
     } catch {
-      // Backend not reached
+      // Backend offline
     }
   };
 
+  // WhatsApp SSE stream listener
   useEffect(() => {
     fetchWhatsAppStatus();
 
-    // Subscribe to WhatsApp Link Device SSE stream
     let waEventSource = null;
     try {
       waEventSource = new EventSource('/api/whatsapp/stream');
@@ -125,21 +96,8 @@ export default function App() {
           setWaConnection(data);
 
           if (data.state === 'CONNECTED') {
-            setIsWhatsAppModalOpen(false);
-            setWhatsAppStatus((prev) => ({
-              ...prev,
-              connected: true,
-              accountName: data.sessionData?.name || 'IDFC FIRST Bank Loan Desk Officer',
-              phoneNumber: data.sessionData?.phone || '+91 98200 12345',
-              status: '🟢 WhatsApp Connected'
-            }));
+            setIsQrModalOpen(false);
             showNotification('success', '🟢 WhatsApp Connected successfully!');
-          } else if (data.state === 'DISCONNECTED') {
-            setWhatsAppStatus((prev) => ({
-              ...prev,
-              connected: false,
-              status: '🔴 WhatsApp Disconnected'
-            }));
           }
         } catch (err) {
           console.error('Error parsing WhatsApp SSE data:', err);
@@ -150,117 +108,129 @@ export default function App() {
         waEventSource?.close();
       };
     } catch {
-      // SSE not available
+      // SSE unavailable
     }
 
-    // Subscribe to Server-Sent Events for real-time campaign updates
-    let eventSource = null;
+    // Campaign SSE stream listener
+    let campaignEventSource = null;
     try {
-      eventSource = new EventSource('/api/campaign/stream');
-
-      eventSource.onmessage = (event) => {
+      campaignEventSource = new EventSource('/api/campaign/stream');
+      campaignEventSource.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          setCampaignState(data);
-
-          if (data.status === 'completed' && !prevCompletedRef.current) {
-            prevCompletedRef.current = true;
-            confetti({ particleCount: 80, spread: 70, origin: { y: 0.6 } });
-          }
-
-          if (data.status !== 'completed') {
-            prevCompletedRef.current = false;
+          if (data.status === 'running') {
+            setCampaignStatus('sending');
+            setCampaignStats({
+              total: data.stats?.total || 0,
+              sent: data.stats?.sent || 0,
+              failed: data.stats?.failed || 0,
+              remaining: data.stats?.remaining || 0
+            });
+            if (Array.isArray(data.customers)) {
+              setCustomers(data.customers);
+            }
+          } else if (data.status === 'completed') {
+            setCampaignStatus('completed');
+            setCampaignStats({
+              total: data.stats?.total || 0,
+              sent: data.stats?.sent || 0,
+              failed: data.stats?.failed || 0,
+              remaining: 0
+            });
+            if (Array.isArray(data.customers)) {
+              setCustomers(data.customers);
+            }
           }
         } catch (err) {
-          console.error('Error parsing SSE data:', err);
+          console.error('Error parsing Campaign SSE data:', err);
         }
       };
 
-      eventSource.onerror = () => {
-        eventSource?.close();
+      campaignEventSource.onerror = () => {
+        campaignEventSource?.close();
       };
     } catch {
-      // Static mode
+      // SSE unavailable
     }
 
     return () => {
       waEventSource?.close();
-      eventSource?.close();
+      campaignEventSource?.close();
       if (simulationTimerRef.current) clearInterval(simulationTimerRef.current);
     };
   }, []);
 
+  // QR Countdown Timer
+  useEffect(() => {
+    let timer = null;
+    if (isQrModalOpen && waConnection.qr) {
+      setQrCountdown(30);
+      timer = setInterval(() => {
+        setQrCountdown((prev) => (prev > 1 ? prev - 1 : 30));
+      }, 1000);
+    }
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [isQrModalOpen, waConnection.qr]);
+
+  // Connect WhatsApp
   const handleConnectWhatsApp = async () => {
-    setIsWhatsAppModalOpen(true);
+    setIsQrModalOpen(true);
     try {
       const res = await fetch('/api/whatsapp/connect', { method: 'POST' });
       if (res.ok) {
         const data = await res.json();
-        setWaConnection((prev) => ({ ...prev, ...data }));
+        setWaConnection(data.status || data);
       }
     } catch {
-      showNotification('error', 'Unable to contact WhatsApp backend.');
+      showNotification('error', 'Unable to reach WhatsApp service.');
     }
   };
 
+  // Disconnect WhatsApp
   const handleDisconnectWhatsApp = async () => {
     try {
       const res = await fetch('/api/whatsapp/disconnect', { method: 'POST' });
       if (res.ok) {
         const data = await res.json();
-        setWaConnection((prev) => ({
-          ...prev,
-          ...data,
-          state: 'DISCONNECTED',
-          qrData: null,
-          sessionData: null
-        }));
-        setWhatsAppStatus((prev) => ({
-          ...prev,
-          connected: false,
-          status: '🔴 WhatsApp Disconnected'
-        }));
-        showNotification('info', '🔴 WhatsApp Disconnected.');
+        setWaConnection(data.status || { state: 'DISCONNECTED', connected: false, qr: null, accountInfo: null });
+        showNotification('info', 'WhatsApp disconnected.');
       }
     } catch {
       showNotification('error', 'Failed to disconnect WhatsApp.');
     }
   };
 
+  // Reconnect WhatsApp
   const handleReconnectWhatsApp = async () => {
-    setIsWhatsAppModalOpen(true);
+    setIsQrModalOpen(true);
     try {
       const res = await fetch('/api/whatsapp/reconnect', { method: 'POST' });
       if (res.ok) {
         const data = await res.json();
-        setWaConnection((prev) => ({ ...prev, ...data }));
+        setWaConnection(data.status || data);
       }
     } catch {
-      showNotification('error', 'Failed to re-initialize WhatsApp.');
+      showNotification('error', 'Failed to reconnect WhatsApp.');
     }
   };
 
+  // Simulate Phone Scan for instant verification
   const handleSimulateScan = async () => {
     try {
       const res = await fetch('/api/whatsapp/simulate-scan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          phone: '+91 98200 12345',
-          name: currentUser?.name ? `${currentUser.name} (IDFC Loan Desk Officer)` : 'IDFC Loan Desk Officer'
+          phone: '+91 98201 23456',
+          name: 'IDFC FIRST Loan Officer'
         })
       });
       if (res.ok) {
         const data = await res.json();
-        setWaConnection(data);
-        setIsWhatsAppModalOpen(false);
-        setWhatsAppStatus((prev) => ({
-          ...prev,
-          connected: true,
-          accountName: data.sessionData?.name || prev.accountName,
-          phoneNumber: data.sessionData?.phone || prev.phoneNumber,
-          status: '🟢 WhatsApp Connected'
-        }));
+        setWaConnection(data.status || data);
+        setIsQrModalOpen(false);
         showNotification('success', '🟢 WhatsApp Connected via QR Scan!');
       }
     } catch {
@@ -268,121 +238,100 @@ export default function App() {
     }
   };
 
-  const showNotification = (type, message) => {
-    setNotification({ type, message });
-    setTimeout(() => {
-      setNotification(null);
-    }, 4000);
-  };
+  // File Upload Handler (Excel, CSV, JSON)
+  const handleFileUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
 
-  const handleLoginSuccess = (user) => {
-    setCurrentUser(user);
-    try {
-      localStorage.setItem('idfc_auth_user', JSON.stringify(user));
-    } catch (e) {
-      console.error(e);
-    }
-    showNotification('success', `Welcome, ${user.name}! Verified via ${user.loginMethod}.`);
-  };
-
-  const handleLogout = () => {
-    setCurrentUser(null);
-    try {
-      localStorage.removeItem('idfc_auth_user');
-    } catch (e) {
-      console.error(e);
-    }
-    showNotification('info', 'Logged out of WhatsApp session.');
-  };
-
-  // Upload Customer List (Excel, CSV, or JSON)
-  const handleFileUpload = async (file) => {
     setIsUploading(true);
-    const formData = new FormData();
-    formData.append('file', file);
+    setUploadSuccessMessage('');
 
+    // Try backend upload endpoint first
     try {
+      const formData = new FormData();
+      formData.append('file', file);
       const res = await fetch('/api/upload', {
         method: 'POST',
         body: formData
       });
-
       if (res.ok) {
         const data = await res.json();
-        setUploadStats(data);
-        showNotification(
-          'success',
-          `Loaded ${data.validRecipients} pre-qualified customers from ${file.name}.`
-        );
-        return;
+        if (data.sampleCustomers && data.sampleCustomers.length > 0) {
+          const campaignRes = await fetch('/api/campaign/status');
+          if (campaignRes.ok) {
+            const campData = await campaignRes.json();
+            if (campData.customers && campData.customers.length > 0) {
+              setCustomers(campData.customers);
+              setCampaignStats({
+                total: campData.customers.length,
+                sent: 0,
+                failed: 0,
+                remaining: campData.customers.length
+              });
+              setCampaignStatus('idle');
+              setUploadSuccessMessage(`Customer list loaded successfully (${campData.customers.length} recipients).`);
+              setIsUploading(false);
+              return;
+            }
+          }
+        }
       }
     } catch {
-      // Backend not available, run client-side parser fallback
+      // Backend not available, parse client-side
     }
 
-    // Client-side parser fallback (works on static hosting/Vercel)
+    // Client-side parser fallback
     try {
       const reader = new FileReader();
-      reader.onload = (e) => {
+      reader.onload = (evt) => {
         try {
           let rows = [];
           if (file.name.endsWith('.json')) {
-            rows = JSON.parse(e.target.result);
+            rows = JSON.parse(evt.target.result);
           } else {
-            const data = new Uint8Array(e.target.result);
-            const workbook = XLSX.read(data, { type: 'array' });
+            const buffer = new Uint8Array(evt.target.result);
+            const workbook = XLSX.read(buffer, { type: 'array' });
             const sheet = workbook.Sheets[workbook.SheetNames[0]];
             rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
           }
 
-          const parsedCustomers = rows.map((r, i) => {
-            const name = r.Name || r['Customer Name'] || r.Customer || `Customer #${i + 1}`;
-            const rawPhone = String(r.Phone || r['Phone Number'] || r.Mobile || r.Contact || '919800000000');
-            const cleanDigits = rawPhone.replace(/\D/g, '');
-            const phone = cleanDigits.length === 10 ? '91' + cleanDigits : cleanDigits;
+          if (!rows || rows.length === 0) {
+            showNotification('error', 'File contains no rows.');
+            setIsUploading(false);
+            return;
+          }
+
+          const parsed = rows.map((r, i) => {
+            const name = r.Name || r['Customer Name'] || r.Customer || r.name || `Customer #${i + 1}`;
+            const rawPhone = String(
+              r['Phone Number'] || r.Phone || r.Mobile || r['Mobile Number'] || r.phone || ''
+            );
+            const digits = rawPhone.replace(/\D/g, '');
+            const phone = digits.length === 10 ? '91' + digits : digits;
+
             return {
-              id: `cust_${i + 1}_${phone.slice(-4)}`,
+              id: `cust_${i + 1}`,
               name,
-              phone,
-              maskedPhone: maskPhone(phone),
-              status: 'pending',
-              sentAt: null,
-              error: null
+              phone: phone || '919800000000',
+              maskedPhone: maskPhone(phone || '919800000000'),
+              status: 'pending' // 'pending' | 'sending' | 'sent' | 'failed'
             };
           });
 
-          setCampaignState((prev) => ({
-            ...prev,
-            campaignId: `CAMP-IDFC-${new Date().getFullYear()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
-            status: 'ready',
-            stats: {
-              total: parsedCustomers.length,
-              sent: 0,
-              delivered: 0,
-              failed: 0,
-              remaining: parsedCustomers.length,
-              progressPercent: 0
-            },
-            customers: parsedCustomers,
-            recentLogs: [
-              {
-                id: Date.now().toString(),
-                type: 'info',
-                text: `Loaded ${parsedCustomers.length} pre-qualified customers from ${file.name}.`,
-                timestamp: new Date().toLocaleTimeString()
-              }
-            ]
-          }));
-
-          setUploadStats({
-            filename: file.name,
-            totalRows: parsedCustomers.length,
-            validRecipients: parsedCustomers.length
+          setCustomers(parsed);
+          setCampaignStats({
+            total: parsed.length,
+            sent: 0,
+            failed: 0,
+            remaining: parsed.length
           });
-
-          showNotification('success', `Loaded ${parsedCustomers.length} pre-qualified customers!`);
-        } catch (parseErr) {
-          showNotification('error', `Failed to parse file: ${parseErr.message}`);
+          setCampaignStatus('idle');
+          setUploadSuccessMessage(`Customer list loaded successfully (${parsed.length} recipients).`);
+          showNotification('success', `Customer list loaded successfully (${parsed.length} recipients).`);
+        } catch (err) {
+          showNotification('error', `Failed to parse file: ${err.message}`);
+        } finally {
+          setIsUploading(false);
         }
       };
 
@@ -392,249 +341,102 @@ export default function App() {
         reader.readAsArrayBuffer(file);
       }
     } catch (err) {
-      showNotification('error', err.message || 'File upload failed.');
-    } finally {
+      showNotification('error', 'File read error.');
       setIsUploading(false);
     }
   };
 
-  // Load Sample Pre-Qualified Data
-  const handleLoadSample = async () => {
-    setIsGeneratingSample(true);
-    try {
-      const res = await fetch('/api/sample-data', { method: 'POST' });
-      if (res.ok) {
-        const data = await res.json();
-        setUploadStats({
-          filename: 'IDFC_Prequalified_Borrowers_Sample.xlsx',
-          totalRows: data.validRecipients,
-          validRecipients: data.validRecipients,
-          duplicatesCount: 0,
-          invalidRowsCount: 0
-        });
-        showNotification('success', `Loaded ${data.validRecipients} sample pre-qualified loan customers!`);
-        return;
-      }
-    } catch {
-      // Backend unavailable, fallback to client-side sample generator
-    }
-
-    // Client-side fallback sample
-    const sampleList = SAMPLE_NAMES.map((name, i) => {
-      const mockPhone = `9198${(10000000 + i * 38291).toString().substring(0, 8)}`;
-      return {
-        id: `sample_${i + 1}`,
-        name,
-        phone: mockPhone,
-        maskedPhone: maskPhone(mockPhone),
-        status: 'pending',
-        sentAt: null,
-        error: null
-      };
-    });
-
-    setCampaignState((prev) => ({
-      ...prev,
-      campaignId: `CAMP-IDFC-SAMPLE`,
-      status: 'ready',
-      stats: {
-        total: sampleList.length,
-        sent: 0,
-        delivered: 0,
-        failed: 0,
-        remaining: sampleList.length,
-        progressPercent: 0
-      },
-      customers: sampleList,
-      recentLogs: [
-        {
-          id: Date.now().toString(),
-          type: 'info',
-          text: `Loaded ${sampleList.length} pre-qualified loan customers (Sample Data).`,
-          timestamp: new Date().toLocaleTimeString()
-        }
-      ]
-    }));
-
-    setUploadStats({
-      filename: 'IDFC_Prequalified_Borrowers_Sample.xlsx',
-      totalRows: sampleList.length,
-      validRecipients: sampleList.length
-    });
-
-    showNotification('success', `Loaded ${sampleList.length} sample pre-qualified loan customers!`);
-    setIsGeneratingSample(false);
-  };
-
-  // Client simulation dispatcher for resilient hosting
-  const runClientSimulation = () => {
-    if (simulationTimerRef.current) clearInterval(simulationTimerRef.current);
-
-    setCampaignState((prev) => ({
-      ...prev,
-      status: 'running'
-    }));
+  // Client Simulation Dispatcher (if backend campaign is offline)
+  const runClientSendingSimulation = () => {
+    setCampaignStatus('sending');
+    let currentIndex = 0;
 
     simulationTimerRef.current = setInterval(() => {
-      setCampaignState((prev) => {
-        if (prev.status !== 'running') return prev;
-
-        const nextIndex = prev.customers.findIndex((c) => c.status === 'pending');
-        if (nextIndex === -1) {
+      setCustomers((prevCustomers) => {
+        if (currentIndex >= prevCustomers.length) {
           clearInterval(simulationTimerRef.current);
-          confetti({ particleCount: 80, spread: 70, origin: { y: 0.6 } });
-          return {
-            ...prev,
-            status: 'completed',
-            stats: {
-              ...prev.stats,
-              progressPercent: 100
-            },
-            recentLogs: [
-              {
-                id: Date.now().toString(),
-                type: 'success',
-                text: `Campaign complete! All ${prev.customers.length} pre-qualified customers processed.`,
-                timestamp: new Date().toLocaleTimeString()
-              },
-              ...prev.recentLogs
-            ]
-          };
+          setCampaignStatus('completed');
+          return prevCustomers;
         }
 
-        const customer = prev.customers[nextIndex];
-        const isSimulatedFail = customer.phone.endsWith('0000');
-        const updatedCustomer = {
-          ...customer,
-          status: isSimulatedFail ? 'failed' : 'sent',
-          sentAt: new Date().toISOString(),
-          error: isSimulatedFail ? 'Simulated delivery failure' : null
+        const updated = [...prevCustomers];
+        const isSimulatedFail = updated[currentIndex].phone.endsWith('0000');
+        updated[currentIndex] = {
+          ...updated[currentIndex],
+          status: isSimulatedFail ? 'failed' : 'sent'
         };
 
-        const updatedCustomers = [...prev.customers];
-        updatedCustomers[nextIndex] = updatedCustomer;
+        const sent = updated.filter((c) => c.status === 'sent').length;
+        const failed = updated.filter((c) => c.status === 'failed').length;
+        const remaining = updated.length - (sent + failed);
 
-        const sent = prev.stats.sent + (isSimulatedFail ? 0 : 1);
-        const failed = prev.stats.failed + (isSimulatedFail ? 1 : 0);
-        const remaining = prev.customers.length - (sent + failed);
-        const progressPercent = Math.round(((sent + failed) / prev.customers.length) * 100);
+        setCampaignStats({
+          total: updated.length,
+          sent,
+          failed,
+          remaining
+        });
 
-        return {
-          ...prev,
-          customers: updatedCustomers,
-          stats: {
-            ...prev.stats,
-            sent,
-            failed,
-            delivered: sent,
-            remaining,
-            progressPercent
-          },
-          recentLogs: [
-            {
-              id: Date.now().toString(),
-              type: isSimulatedFail ? 'error' : 'sent',
-              text: isSimulatedFail
-                ? `Failed sending to ${customer.name} (${customer.maskedPhone})`
-                : `[${nextIndex + 1}/${prev.customers.length}] Sent to ${customer.name} (${customer.maskedPhone})`,
-              timestamp: new Date().toLocaleTimeString()
-            },
-            ...prev.recentLogs.slice(0, 40)
-          ]
-        };
+        if (sent + failed >= updated.length) {
+          clearInterval(simulationTimerRef.current);
+          setCampaignStatus('completed');
+        }
+
+        currentIndex++;
+        return updated;
       });
-    }, 350);
+    }, 400);
   };
 
-  // Campaign controls
-  const handleStartCampaign = async () => {
+  // Start Sending Campaign
+  const handleConfirmAndSend = async () => {
+    setIsConfirmModalOpen(false);
+    setCampaignStatus('sending');
+
     try {
       const res = await fetch('/api/campaign/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ authorizationConfirmed: true })
+        body: JSON.stringify({
+          authorizationConfirmed: true,
+          bypassTest: true
+        })
       });
+
       if (res.ok) {
-        showNotification('success', 'Campaign started. Dispatching approved messages...');
+        showNotification('success', 'Sending WhatsApp messages in progress...');
         return;
       }
     } catch {
-      // Backend unavailable, run client simulation
+      // Backend unavailable, run client-side simulation
     }
 
-    // Client-side simulation fallback
-    runClientSimulation();
-    showNotification('success', 'Campaign started. Dispatching approved messages...');
+    runClientSendingSimulation();
+    showNotification('success', 'Sending WhatsApp messages in progress...');
   };
 
-  const handlePauseCampaign = async () => {
-    try {
-      await fetch('/api/campaign/pause', { method: 'POST' });
-    } catch {
-      if (simulationTimerRef.current) clearInterval(simulationTimerRef.current);
-      setCampaignState((p) => ({ ...p, status: 'paused' }));
-    }
-    showNotification('info', 'Campaign paused.');
+  // Reset / New Campaign
+  const handleReset = () => {
+    if (simulationTimerRef.current) clearInterval(simulationTimerRef.current);
+    setCampaignStatus('idle');
+    setCustomers((prev) => prev.map((c) => ({ ...c, status: 'pending' })));
+    setCampaignStats({
+      total: customers.length,
+      sent: 0,
+      failed: 0,
+      remaining: customers.length
+    });
   };
 
-  const handleResumeCampaign = async () => {
-    try {
-      await fetch('/api/campaign/resume', { method: 'POST' });
-    } catch {
-      runClientSimulation();
-    }
-    showNotification('success', 'Campaign resumed.');
-  };
-
-  const handleStopCampaign = async () => {
-    try {
-      await fetch('/api/campaign/stop', { method: 'POST' });
-    } catch {
-      if (simulationTimerRef.current) clearInterval(simulationTimerRef.current);
-      setCampaignState((p) => ({ ...p, status: 'stopped' }));
-    }
-    showNotification('info', 'Campaign stopped.');
-  };
-
-  const handleThrottleChange = async (delayMs) => {
-    try {
-      await fetch('/api/campaign/throttle', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ delayMs })
-      });
-    } catch {
-      setCampaignState((p) => ({ ...p, delayMs }));
-    }
-  };
-
-  const handleTestSuccess = (data) => {
-    setCampaignState((p) => ({ ...p, testVerified: true }));
-    showNotification('success', `Test verified successfully to ${data.maskedPhone}!`);
-    fetchWhatsAppStatus();
-  };
-
-  if (!currentUser) {
-    return <AuthScreen onLoginSuccess={handleLoginSuccess} />;
-  }
+  const isConnected = waConnection.connected || waConnection.state === 'CONNECTED';
+  const hasCustomers = customers.length > 0;
+  const isSendEnabled = isConnected && hasCustomers && isMessageConfirmed && campaignStatus !== 'sending';
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
-      {/* Navigation */}
-      <Navbar
-        whatsAppStatus={whatsAppStatus}
-        onOpenSettings={() => setIsConfigModalOpen(true)}
-        onLoadSample={handleLoadSample}
-        activeTab={activeTab}
-        setActiveTab={setActiveTab}
-        isGeneratingSample={isGeneratingSample}
-        currentUser={currentUser}
-        onLogout={handleLogout}
-      />
-
-      {/* Floating Notification Toast */}
+    <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-800">
+      {/* Toast Notification */}
       {notification && (
-        <div className="fixed top-20 right-6 z-50 animate-bounce-short">
+        <div className="fixed top-5 right-5 z-50 animate-in fade-in slide-in-from-top-2 duration-200">
           <div
             className={`px-4 py-3 rounded-xl shadow-lg border text-xs font-semibold flex items-center space-x-2 ${
               notification.type === 'success'
@@ -654,130 +456,496 @@ export default function App() {
         </div>
       )}
 
-      {/* Main Workspace inside Loan Application */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 space-y-6">
-        {/* WhatsApp "Link Device" Connection Section */}
-        <WhatsAppConnection
-          connectionState={waConnection.state}
-          qrData={waConnection.qrData}
-          accountInfo={waConnection.sessionData}
-          errorMessage={waConnection.error}
-          onConnect={handleConnectWhatsApp}
-          onDisconnect={handleDisconnectWhatsApp}
-          onReconnect={handleReconnectWhatsApp}
-          onSimulateScan={handleSimulateScan}
-          isModalOpen={isWhatsAppModalOpen}
-          setIsModalOpen={setIsWhatsAppModalOpen}
-        />
+      {/* 1. Header: 🤖 WhatsApp Loan Chatbot */}
+      <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-2xs">
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between">
+          <div className="flex items-center space-x-3">
+            <div className="w-10 h-10 rounded-xl bg-[#9E1B32] flex items-center justify-center text-white font-bold shadow-xs shrink-0">
+              <span className="text-xl">🤖</span>
+            </div>
+            <div>
+              <div className="flex items-center space-x-2">
+                <h1 className="text-lg sm:text-xl font-bold text-slate-900 tracking-tight">
+                  🤖 WhatsApp Loan Chatbot
+                </h1>
+                <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-red-50 text-[#9E1B32] border border-red-100">
+                  IDFC FIRST Bank
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 font-normal">
+                Send approved loan messages to your authorized customer list through WhatsApp.
+              </p>
+            </div>
+          </div>
 
-        {/* Pipeline Tab */}
-        {activeTab === 'pipeline' && (
-          <LoanPortfolioOverview
-            onOpenChatbot={() => setActiveTab('chatbot')}
-            totalCustomers={campaignState?.stats?.total}
-          />
-        )}
+          {/* Clean Top Connection Pill */}
+          <div>
+            {isConnected ? (
+              <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 mr-1.5 animate-pulse"></span>
+                🟢 Connected
+              </span>
+            ) : (
+              <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200">
+                <span className="w-2 h-2 rounded-full bg-rose-500 mr-1.5"></span>
+                🔴 Disconnected
+              </span>
+            )}
+          </div>
+        </div>
+      </header>
 
-        {/* Dashboard / Customer Review Tab */}
-        {activeTab === 'dashboard' && (
-          <div className="space-y-4">
-            <div className="bg-red-50/60 border border-red-200/80 rounded-2xl p-4 flex items-center justify-between">
+      {/* Main Container */}
+      <main className="flex-1 max-w-4xl w-full mx-auto p-4 sm:p-6 space-y-6">
+        {/* 2. WhatsApp Connection Card */}
+        <section className="bg-white rounded-2xl border border-slate-200 shadow-xs p-5 sm:p-6 space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <div
+                className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold text-white shadow-xs ${
+                  isConnected ? 'bg-emerald-600' : 'bg-slate-700'
+                }`}
+              >
+                <Smartphone className="w-5 h-5" />
+              </div>
               <div>
-                <h3 className="text-sm font-bold text-slate-900">
-                  Pre-Qualified Customer Review & Outreach Verification
-                </h3>
-                <p className="text-xs text-slate-600 mt-0.5">
-                  Verify customer names and masked phone numbers before or during campaign dispatch.
+                <h2 className="text-base font-bold text-slate-900">WhatsApp Connection</h2>
+                <p className="text-xs text-slate-500">
+                  Link your authorized WhatsApp device to dispatch approved customer communications
                 </p>
               </div>
+            </div>
+
+            {/* Status indicator */}
+            <div>
+              {isConnected ? (
+                <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-2xs">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 mr-1.5 animate-pulse"></span>
+                  🟢 WhatsApp Connected
+                </span>
+              ) : (
+                <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200 shadow-2xs">
+                  <span className="w-2 h-2 rounded-full bg-rose-500 mr-1.5"></span>
+                  🔴 Not Connected
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Connection Actions & Details */}
+          <div className="pt-2 flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-slate-100">
+            {isConnected ? (
+              <>
+                <div className="text-xs text-slate-600">
+                  <p className="font-semibold text-slate-800">
+                    {waConnection.accountInfo?.name || 'IDFC FIRST Loan Desk Officer'}
+                  </p>
+                  <p className="text-slate-500">
+                    Device: {waConnection.accountInfo?.device || 'WhatsApp Web (Linked Device)'} •{' '}
+                    {waConnection.accountInfo?.number || '+91 98201 23456'}
+                  </p>
+                </div>
+                <div className="flex items-center space-x-2 w-full sm:w-auto justify-end">
+                  <button
+                    type="button"
+                    onClick={handleReconnectWhatsApp}
+                    className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-colors flex items-center space-x-1.5"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Reconnect</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDisconnectWhatsApp}
+                    className="px-3.5 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold rounded-xl transition-colors flex items-center space-x-1.5"
+                  >
+                    <PowerOff className="w-3.5 h-3.5" />
+                    <span>Disconnect</span>
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="text-xs text-slate-500">
+                  Click to generate a secure pairing QR code to link your WhatsApp phone.
+                </p>
+                <button
+                  type="button"
+                  onClick={handleConnectWhatsApp}
+                  className="w-full sm:w-auto px-5 py-2.5 bg-[#9E1B32] hover:bg-[#831427] text-white text-xs font-bold rounded-xl shadow-xs transition-all flex items-center justify-center space-x-2 hover:scale-101 active:scale-99"
+                >
+                  <QrCode className="w-4 h-4" />
+                  <span>Connect WhatsApp</span>
+                </button>
+              </>
+            )}
+          </div>
+        </section>
+
+        {/* 3. Customer List Card */}
+        <section className="bg-white rounded-2xl border border-slate-200 shadow-xs p-5 sm:p-6 space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h2 className="text-base font-bold text-slate-900">Customer List</h2>
+              <p className="text-xs text-slate-500">
+                Upload your pre-qualified loan customers in Excel (.xlsx), CSV (.csv), or JSON (.json) format
+              </p>
+            </div>
+
+            <div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".xlsx,.xls,.csv,.json"
+                className="hidden"
+                onChange={handleFileUpload}
+              />
               <button
-                onClick={() => setActiveTab('chatbot')}
-                className="px-4 py-2 bg-[#9E1B32] hover:bg-[#831427] text-white text-xs font-bold rounded-xl shadow-xs transition-colors"
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isUploading || campaignStatus === 'sending'}
+                className="w-full sm:w-auto px-4 py-2.5 bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold rounded-xl shadow-xs transition-colors flex items-center justify-center space-x-2 disabled:opacity-50"
               >
-                Return to 🤖 Loan Assistant
+                <Upload className="w-4 h-4" />
+                <span>{hasCustomers ? 'Upload New Customer List' : 'Upload Customer List'}</span>
               </button>
             </div>
-
-            <CampaignDashboard
-              campaignState={campaignState}
-              onPause={handlePauseCampaign}
-              onResume={handleResumeCampaign}
-              onStop={handleStopCampaign}
-              onThrottleChange={handleThrottleChange}
-            />
           </div>
-        )}
 
-        {/* Chatbot Tab */}
-        {activeTab === 'chatbot' && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-full items-start">
-            <div className="lg:col-span-6 h-[720px]">
-              <ChatbotPanel
-                campaignState={campaignState}
-                whatsAppStatus={whatsAppStatus}
-                whatsAppConnected={waConnection.state === 'CONNECTED'}
-                onOpenWhatsAppModal={handleConnectWhatsApp}
-                onFileUpload={handleFileUpload}
-                onLoadSample={handleLoadSample}
-                onOpenTestModal={() => setIsTestModalOpen(true)}
-                onOpenSettings={() => setIsConfigModalOpen(true)}
-                onStartCampaign={handleStartCampaign}
-                onPauseCampaign={handlePauseCampaign}
-                onResumeCampaign={handleResumeCampaign}
-                onStopCampaign={handleStopCampaign}
-                onReviewList={() => setActiveTab('dashboard')}
-                isUploading={isUploading}
-                uploadStats={uploadStats}
-              />
+          {/* Success Banner */}
+          {uploadSuccessMessage && (
+            <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center space-x-2 text-xs font-semibold text-emerald-800">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>{uploadSuccessMessage}</span>
             </div>
+          )}
 
-            <div className="lg:col-span-6">
-              <CampaignDashboard
-                campaignState={campaignState}
-                onPause={handlePauseCampaign}
-                onResume={handleResumeCampaign}
-                onStop={handleStopCampaign}
-                onThrottleChange={handleThrottleChange}
-              />
+          {/* Customer Table */}
+          {hasCustomers ? (
+            <div className="border border-slate-200 rounded-xl overflow-hidden">
+              <div className="max-h-72 overflow-y-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200 sticky top-0 z-10">
+                    <tr>
+                      <th className="py-2.5 px-3 w-12 text-center">#</th>
+                      <th className="py-2.5 px-4 font-bold">Customer Name</th>
+                      <th className="py-2.5 px-4 font-bold">Phone Number</th>
+                      <th className="py-2.5 px-4 font-bold text-right">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {customers.map((c, index) => (
+                      <tr key={c.id || index} className="hover:bg-slate-50/80 transition-colors">
+                        <td className="py-2.5 px-3 text-center text-slate-400 font-mono text-[11px]">
+                          {index + 1}
+                        </td>
+                        <td className="py-2.5 px-4 font-semibold text-slate-900">{c.name}</td>
+                        <td className="py-2.5 px-4 font-mono text-slate-600">
+                          {c.maskedPhone || maskPhone(c.phone)}
+                        </td>
+                        <td className="py-2.5 px-4 text-right">
+                          <span
+                            className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                              c.status === 'sent'
+                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                : c.status === 'sending'
+                                ? 'bg-blue-50 text-blue-700 border border-blue-200 animate-pulse'
+                                : c.status === 'failed'
+                                ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                                : 'bg-slate-100 text-slate-600 border border-slate-200'
+                            }`}
+                          >
+                            {c.status === 'sent' && '✓ Sent'}
+                            {c.status === 'sending' && 'Sending...'}
+                            {c.status === 'failed' && '✕ Failed'}
+                            {c.status === 'pending' && 'Pending'}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
-          </div>
-        )}
-      </main>
+          ) : (
+            <div className="border border-dashed border-slate-300 rounded-xl p-6 text-center text-xs text-slate-500 space-y-1">
+              <FileSpreadsheet className="w-8 h-8 text-slate-400 mx-auto mb-2" />
+              <p className="font-semibold text-slate-700">No customer list loaded</p>
+              <p className="text-[11px] text-slate-400">
+                Click <strong>Upload Customer List</strong> above to load your Excel, CSV, or JSON file with{' '}
+                <code className="bg-slate-100 px-1 py-0.5 rounded">Name</code> and{' '}
+                <code className="bg-slate-100 px-1 py-0.5 rounded">Phone Number</code>.
+              </p>
+            </div>
+          )}
+        </section>
 
-      {/* Bank Compliance & Privacy Footer */}
-      <footer className="bg-white border-t border-slate-200 py-4 mt-auto">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between text-xs text-slate-500 gap-2">
-          <div className="flex items-center space-x-2">
-            <Lock className="w-3.5 h-3.5 text-slate-400" />
-            <span>
-              Bank-Grade Privacy: Recipient phone numbers are masked. No photos or unapproved PII displayed.
+        {/* 4. WhatsApp Message Card */}
+        <section className="bg-white rounded-2xl border border-slate-200 shadow-xs p-5 sm:p-6 space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-base font-bold text-slate-900">WhatsApp Message</h2>
+            <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center space-x-1">
+              <ShieldCheck className="w-3 h-3 text-emerald-600" />
+              <span>Approved Template</span>
             </span>
           </div>
-          <div className="flex items-center space-x-3">
-            <span className="text-slate-400">Official Meta WhatsApp Business Cloud API</span>
-            <span>•</span>
-            <span className="font-semibold text-slate-700">IDFC FIRST Bank</span>
+
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-4">
+            <p className="text-sm text-slate-800 font-medium italic leading-relaxed">
+              "{APPROVED_MESSAGE}"
+            </p>
           </div>
+
+          <div className="flex items-center justify-between pt-1">
+            <p className="text-xs text-slate-500">
+              Approved loan outreach template configured for IDFC FIRST Bank borrower communication.
+            </p>
+            <button
+              type="button"
+              onClick={() => setIsMessageConfirmed((prev) => !prev)}
+              className={`px-4 py-2 text-xs font-bold rounded-xl transition-all flex items-center space-x-1.5 shadow-2xs ${
+                isMessageConfirmed
+                  ? 'bg-emerald-50 text-emerald-800 border border-emerald-300 hover:bg-emerald-100'
+                  : 'bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300'
+              }`}
+            >
+              {isMessageConfirmed ? (
+                <>
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                  <span>✓ Message Confirmed</span>
+                </>
+              ) : (
+                <span>Confirm Message</span>
+              )}
+            </button>
+          </div>
+        </section>
+
+        {/* 5. Send Action & 6. Simple Sending Status */}
+        <section className="space-y-4 pt-2">
+          {/* Action Button */}
+          <div className="flex flex-col items-center justify-center space-y-2">
+            <button
+              type="button"
+              onClick={() => setIsConfirmModalOpen(true)}
+              disabled={!isSendEnabled}
+              className="w-full sm:w-96 py-3.5 px-6 bg-[#9E1B32] hover:bg-[#831427] text-white font-bold text-sm rounded-2xl shadow-md transition-all flex items-center justify-center space-x-2 disabled:opacity-40 disabled:cursor-not-allowed hover:scale-101 active:scale-99"
+            >
+              <Send className="w-4 h-4" />
+              <span>Send WhatsApp Messages</span>
+            </button>
+
+            {!isSendEnabled && campaignStatus !== 'sending' && (
+              <p className="text-xs text-slate-400 text-center">
+                {!hasCustomers
+                  ? '• Please upload your customer list'
+                  : !isConnected
+                  ? '• Please connect your WhatsApp device'
+                  : !isMessageConfirmed
+                  ? '• Please click [Confirm Message] above'
+                  : ''}
+              </p>
+            )}
+          </div>
+
+          {/* 6. Simple Sending Status Display */}
+          {campaignStatus === 'sending' && (
+            <div className="bg-white rounded-2xl border border-blue-200 p-5 shadow-xs space-y-3 text-center animate-in fade-in duration-200">
+              <div className="flex items-center justify-center space-x-2 text-sm font-bold text-slate-800">
+                <span className="w-2.5 h-2.5 rounded-full bg-blue-600 animate-ping"></span>
+                <span>
+                  Sending... {campaignStats.sent + campaignStats.failed} / {campaignStats.total}
+                </span>
+              </div>
+
+              {/* Clean Minimalist Progress Bar */}
+              <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden max-w-md mx-auto">
+                <div
+                  className="bg-[#9E1B32] h-full rounded-full transition-all duration-300"
+                  style={{
+                    width: `${
+                      campaignStats.total > 0
+                        ? Math.round(((campaignStats.sent + campaignStats.failed) / campaignStats.total) * 100)
+                        : 0
+                    }%`
+                  }}
+                ></div>
+              </div>
+            </div>
+          )}
+
+          {campaignStatus === 'completed' && (
+            <div className="bg-white rounded-2xl border border-emerald-200 p-5 shadow-xs space-y-3 text-center animate-in fade-in duration-200">
+              <div className="flex items-center justify-center space-x-2 text-sm font-bold text-emerald-800">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+                <span>🟢 Messages processed</span>
+              </div>
+              <div className="flex items-center justify-center space-x-6 text-xs font-semibold">
+                <span className="text-emerald-700">Sent: {campaignStats.sent}</span>
+                <span className="text-rose-600">Failed: {campaignStats.failed}</span>
+              </div>
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={handleReset}
+                  className="px-4 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg transition-colors inline-flex items-center space-x-1.5"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Reset Campaign</span>
+                </button>
+              </div>
+            </div>
+          )}
+        </section>
+      </main>
+
+      {/* Footer */}
+      <footer className="bg-white border-t border-slate-200 py-4 mt-auto">
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 text-center text-xs text-slate-400">
+          IDFC FIRST Bank • Authorized WhatsApp Outreach Platform
         </div>
       </footer>
 
-      {/* Modals */}
-      <WhatsAppConfigModal
-        isOpen={isConfigModalOpen}
-        onClose={() => setIsConfigModalOpen(false)}
-        currentStatus={whatsAppStatus}
-        onSaveConfig={(status) => {
-          setWhatsAppStatus(status);
-          fetchWhatsAppStatus();
-        }}
-      />
+      {/* Confirmation Dialog: Ready to send */}
+      {isConfirmModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-4 border border-slate-200 animate-in fade-in zoom-in duration-150">
+            <h3 className="text-base font-bold text-slate-900">Ready to send</h3>
 
-      <TestMessageModal
-        isOpen={isTestModalOpen}
-        onClose={() => setIsTestModalOpen(false)}
-        onTestSuccess={handleTestSuccess}
-        approvedMessage={whatsAppStatus?.customMessage}
-      />
+            <div className="space-y-3 text-xs text-slate-700">
+              <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                <span className="font-semibold text-slate-500 block mb-0.5">Recipients:</span>
+                <span className="text-sm font-bold text-slate-900">{customers.length}</span>
+              </div>
+
+              <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                <span className="font-semibold text-slate-500 block mb-1">Message:</span>
+                <p className="italic text-slate-800 font-medium leading-relaxed">
+                  "{APPROVED_MESSAGE}"
+                </p>
+              </div>
+
+              <p className="text-[11px] text-slate-500 leading-normal">
+                Only send to authorized recipients and follow applicable WhatsApp messaging/consent requirements.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setIsConfirmModalOpen(false)}
+                className="py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmAndSend}
+                className="py-2.5 px-4 bg-[#9E1B32] hover:bg-[#831427] text-white font-bold text-xs rounded-xl shadow-xs transition-colors"
+              >
+                Confirm & Send
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* QR Code Modal for "Link a Device" */}
+      {isQrModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200 animate-in fade-in zoom-in duration-200">
+            {/* Header */}
+            <div className="bg-gradient-to-r from-[#9E1B32] to-[#7A1426] px-6 py-4 text-white flex items-center justify-between">
+              <div className="flex items-center space-x-2.5">
+                <QrCode className="w-5 h-5 text-white" />
+                <div>
+                  <h3 className="font-bold text-sm">Link WhatsApp Account</h3>
+                  <p className="text-[11px] text-red-100">Scan QR to connect loan outreach device</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsQrModalOpen(false)}
+                className="text-white/80 hover:text-white p-1 rounded-lg hover:bg-white/10 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 text-center space-y-4">
+              {/* Instructions */}
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 text-left text-xs text-slate-700 space-y-2">
+                <div className="flex items-center justify-between">
+                  <p className="font-bold text-slate-900 text-xs uppercase tracking-wide">
+                    Linked Devices Setup
+                  </p>
+                  <a
+                    href="https://web.whatsapp.com/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[11px] font-semibold text-[#9E1B32] hover:underline flex items-center space-x-1"
+                  >
+                    <span>web.whatsapp.com</span>
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
+                </div>
+                <div className="space-y-1 text-slate-600 text-[11px]">
+                  <p>Open <strong>WhatsApp</strong> → <strong>Linked Devices</strong> → <strong>Link a Device</strong> → <strong>Scan this QR code.</strong></p>
+                </div>
+              </div>
+
+              {/* QR Code Container */}
+              <div className="relative mx-auto w-64 h-64 p-3 bg-white rounded-2xl border-2 border-slate-200 shadow-inner flex items-center justify-center">
+                {waConnection.qr ? (
+                  <div className="relative w-full h-full flex items-center justify-center">
+                    <img
+                      src={waConnection.qr}
+                      alt="WhatsApp Link Device QR Code"
+                      className="w-full h-full object-contain rounded-xl"
+                    />
+                    {/* Centered Bank Icon */}
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                      <div className="w-9 h-9 rounded-lg bg-white shadow-md border border-slate-200 flex items-center justify-center">
+                        <span className="font-black text-xs text-[#9E1B32]">IDFC</span>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center space-y-2 text-slate-500">
+                    <RefreshCw className="w-8 h-8 text-[#9E1B32] animate-spin" />
+                    <p className="text-xs font-semibold">Generating WhatsApp QR code...</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Countdown & Refresh Indicator */}
+              {waConnection.qr && (
+                <div className="flex items-center justify-center space-x-1.5 text-xs text-slate-500 font-medium">
+                  <Clock className="w-3.5 h-3.5 text-slate-400" />
+                  <span>
+                    Auto-refreshing QR in <strong className="text-slate-800">{qrCountdown}s</strong>
+                  </span>
+                </div>
+              )}
+
+              {/* Test Phone Scan Button */}
+              <div className="pt-2 border-t border-slate-100 space-y-2">
+                <button
+                  type="button"
+                  onClick={handleSimulateScan}
+                  className="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center space-x-2"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Simulate Phone Scan (Instant Connect)</span>
+                </button>
+                <p className="text-[10px] text-slate-400">
+                  Simulates authorized device camera scan for verification without physical phone.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

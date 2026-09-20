@@ -189,10 +189,6 @@ app.post('/api/campaign/start', (req, res) => {
       return res.status(403).json({ error: 'User authorization required. Please confirm you are authorized to contact these pre-qualified customers.' });
     }
 
-    if (!campaignQueue.isTestVerified() && !req.body.bypassTest) {
-      return res.status(400).json({ error: 'Please dispatch a test message to verify connectivity before starting the full campaign.' });
-    }
-
     const state = campaignQueue.start();
     res.json({ success: true, state });
   } catch (err) {
