@@ -7,6 +7,7 @@ import CampaignDashboard from './components/CampaignDashboard';
 import LoanPortfolioOverview from './components/LoanPortfolioOverview';
 import WhatsAppConfigModal from './components/WhatsAppConfigModal';
 import TestMessageModal from './components/TestMessageModal';
+import AuthScreen from './components/AuthScreen';
 import { Lock, CheckCircle2, AlertCircle } from 'lucide-react';
 
 const DEFAULT_MESSAGE =
@@ -28,6 +29,14 @@ function maskPhone(p) {
 }
 
 export default function App() {
+  const [currentUser, setCurrentUser] = useState(() => {
+    try {
+      const saved = localStorage.getItem('idfc_auth_user');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
   const [activeTab, setActiveTab] = useState('chatbot');
   const [whatsAppStatus, setWhatsAppStatus] = useState({
     connected: true,
@@ -125,6 +134,26 @@ export default function App() {
     setTimeout(() => {
       setNotification(null);
     }, 4000);
+  };
+
+  const handleLoginSuccess = (user) => {
+    setCurrentUser(user);
+    try {
+      localStorage.setItem('idfc_auth_user', JSON.stringify(user));
+    } catch (e) {
+      console.error(e);
+    }
+    showNotification('success', `Welcome, ${user.name}! Verified via ${user.loginMethod}.`);
+  };
+
+  const handleLogout = () => {
+    setCurrentUser(null);
+    try {
+      localStorage.removeItem('idfc_auth_user');
+    } catch (e) {
+      console.error(e);
+    }
+    showNotification('info', 'Logged out of WhatsApp session.');
   };
 
   // Upload Customer List (Excel, CSV, or JSON)
@@ -446,6 +475,10 @@ export default function App() {
     fetchWhatsAppStatus();
   };
 
+  if (!currentUser) {
+    return <AuthScreen onLoginSuccess={handleLoginSuccess} />;
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
       {/* Navigation */}
@@ -456,6 +489,8 @@ export default function App() {
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         isGeneratingSample={isGeneratingSample}
+        currentUser={currentUser}
+        onLogout={handleLogout}
       />
 
       {/* Floating Notification Toast */}

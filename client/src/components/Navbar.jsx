@@ -1,5 +1,5 @@
 import React from 'react';
-import { Settings, Download, Sparkles, Building2, UserCheck, Briefcase } from 'lucide-react';
+import { Settings, Download, Sparkles, Building2, LogOut, User } from 'lucide-react';
 
 export default function Navbar({
   whatsAppStatus,
@@ -7,7 +7,9 @@ export default function Navbar({
   onLoadSample,
   activeTab,
   setActiveTab,
-  isGeneratingSample
+  isGeneratingSample,
+  currentUser,
+  onLogout
 }) {
   const isDemo = whatsAppStatus?.isDemoMode;
   const isConnected = whatsAppStatus?.connected;
@@ -135,6 +137,24 @@ export default function Navbar({
             >
               <Settings className="w-4 h-4" />
             </button>
+
+            {/* User Profile & Logout */}
+            {currentUser && (
+              <div className="flex items-center space-x-2 pl-2 border-l border-slate-200">
+                <div className="hidden xl:block text-right">
+                  <p className="text-xs font-bold text-slate-800 leading-tight">{currentUser.name}</p>
+                  <p className="text-[10px] text-slate-400 leading-tight">{currentUser.loginMethod}</p>
+                </div>
+                <button
+                  onClick={onLogout}
+                  className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors flex items-center space-x-1 text-xs font-semibold"
+                  title="Logout of WhatsApp Session"
+                >
+                  <LogOut className="w-4 h-4" />
+                  <span className="hidden sm:inline">Logout</span>
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>
