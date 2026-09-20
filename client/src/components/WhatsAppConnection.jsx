@@ -133,6 +133,17 @@ export default function WhatsAppConnection({
 
         {/* Action Buttons based on state */}
         <div className="flex items-center space-x-2 w-full sm:w-auto justify-end">
+          <a
+            href="https://web.whatsapp.com/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="px-3 py-2 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 text-xs font-semibold rounded-xl transition-colors flex items-center space-x-1.5"
+            title="Open official WhatsApp Web browser interface (web.whatsapp.com)"
+          >
+            <ExternalLink className="w-3.5 h-3.5 text-slate-500" />
+            <span>web.whatsapp.com</span>
+          </a>
+
           {isConnected ? (
             <>
               <button
@@ -211,9 +222,20 @@ export default function WhatsAppConnection({
             <div className="p-6 text-center space-y-5">
               {/* Instructions */}
               <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 text-left text-xs text-slate-700 space-y-2">
-                <p className="font-bold text-slate-900 text-xs uppercase tracking-wide">
-                  Open WhatsApp → Linked Devices → Link a Device → Scan this QR
-                </p>
+                <div className="flex items-center justify-between">
+                  <p className="font-bold text-slate-900 text-xs uppercase tracking-wide">
+                    Linked Devices Setup
+                  </p>
+                  <a
+                    href="https://web.whatsapp.com/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[11px] font-semibold text-[#9E1B32] hover:underline flex items-center space-x-1"
+                  >
+                    <span>web.whatsapp.com</span>
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
+                </div>
                 <div className="space-y-1 text-slate-600 text-[11px]">
                   <p>1. Open <strong>WhatsApp</strong> on your authorized mobile phone</p>
                   <p>2. Tap <strong>Menu (⋮)</strong> or <strong>Settings (⚙️)</strong></p>
@@ -297,3 +319,4 @@ export default function WhatsAppConnection({
     </div>
   );
 }
+

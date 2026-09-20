@@ -100,3 +100,4 @@ router.post('/simulate-scan', async (req, res) => {
 });
 
 export default router;
+
