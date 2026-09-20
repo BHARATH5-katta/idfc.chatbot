@@ -14,6 +14,25 @@ import {
 const APPROVED_MESSAGE =
   'You are pre-qualified for an IDFC FIRST Bank loan. If you’re interested, please contact me.';
 
+// Persistent Node.js backend configuration (e.g. from Vercel env VITE_WHATSAPP_BACKEND_URL)
+const BACKEND_URL = (import.meta.env.VITE_WHATSAPP_BACKEND_URL || '').replace(/\/+$/, '');
+const getApiUrl = (endpoint) => (BACKEND_URL ? `${BACKEND_URL}${endpoint}` : endpoint);
+
+function sanitizeErrorMessage(msg) {
+  if (!msg) return 'WhatsApp service unavailable.\nPlease start/reconnect the WhatsApp service.';
+  if (typeof msg !== 'string') return 'WhatsApp service unavailable.\nPlease start/reconnect the WhatsApp service.';
+  if (
+    msg.includes('/var/task') ||
+    msg.includes('ENOENT') ||
+    msg.includes('node_modules') ||
+    msg.includes('mkdir') ||
+    msg.includes('.wwebjs_auth')
+  ) {
+    return 'WhatsApp service unavailable.\nPlease start/reconnect the WhatsApp service.';
+  }
+  return msg;
+}
+
 function maskPhone(p) {
   if (!p) return '***';
   const cleaned = String(p).replace(/\D/g, '');
@@ -65,13 +84,29 @@ export default function App() {
   // Fetch initial WhatsApp connection status from backend
   const fetchWhatsAppStatus = async () => {
     try {
-      const res = await fetch('/api/whatsapp/status');
+      const res = await fetch(getApiUrl('/api/whatsapp/status'));
       if (res.ok) {
         const data = await res.json();
+        if (data.state === 'Error') {
+          data.error = sanitizeErrorMessage(data.error);
+        }
         setWaConnection(data);
+      } else {
+        setWaConnection((prev) => ({
+          ...prev,
+          state: 'Error',
+          connected: false,
+          error: 'WhatsApp service unavailable.\nPlease start/reconnect the WhatsApp service.'
+        }));
       }
     } catch {
-      // Backend offline
+      // Backend offline or unreachable
+      setWaConnection((prev) => ({
+        ...prev,
+        state: 'Error',
+        connected: false,
+        error: 'WhatsApp service unavailable.\nPlease start/reconnect the WhatsApp service.'
+      }));
     }
   };
 
@@ -82,11 +117,14 @@ export default function App() {
 
     const intervalId = setInterval(async () => {
       try {
-        const res = await fetch('/api/whatsapp/status');
+        const res = await fetch(getApiUrl('/api/whatsapp/status'));
         if (res.ok) {
           const data = await res.json();
+          if (data.state === 'Error') {
+            data.error = sanitizeErrorMessage(data.error);
+          }
           setWaConnection(data);
-          if (data.state === 'Connected') {
+          if (data.state === 'Connected' || data.connected) {
             setIsQrModalOpen(false);
             showNotification('success', '🟢 WhatsApp Connected! WhatsApp is ready.');
           }
@@ -105,10 +143,13 @@ export default function App() {
 
     let waEventSource = null;
     try {
-      waEventSource = new EventSource('/api/whatsapp/stream');
+      waEventSource = new EventSource(getApiUrl('/api/whatsapp/stream'));
       waEventSource.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
+          if (data.state === 'Error') {
+            data.error = sanitizeErrorMessage(data.error);
+          }
           setWaConnection(data);
 
           // When real authentication succeeds
@@ -116,7 +157,7 @@ export default function App() {
             setIsQrModalOpen(false);
             showNotification('success', '🟢 WhatsApp Connected! WhatsApp is ready.');
           } else if (data.state === 'Error') {
-            showNotification('error', data.error || 'Unable to generate WhatsApp QR');
+            showNotification('error', sanitizeErrorMessage(data.error));
           }
         } catch (err) {
           console.error('Error parsing WhatsApp SSE data:', err);
@@ -133,7 +174,7 @@ export default function App() {
     // Campaign SSE stream listener
     let campaignEventSource = null;
     try {
-      campaignEventSource = new EventSource('/api/campaign/stream');
+      campaignEventSource = new EventSource(getApiUrl('/api/campaign/stream'));
       campaignEventSource.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
@@ -183,20 +224,38 @@ export default function App() {
   const handleConnectWhatsApp = async () => {
     setIsQrModalOpen(true);
     try {
-      const res = await fetch('/api/whatsapp/connect', { method: 'POST' });
+      const res = await fetch(getApiUrl('/api/whatsapp/connect'), { method: 'POST' });
       if (res.ok) {
         const data = await res.json();
-        setWaConnection(data.status || data);
+        const nextStatus = data.status || data;
+        if (nextStatus.state === 'Error') {
+          nextStatus.error = sanitizeErrorMessage(nextStatus.error);
+        }
+        setWaConnection(nextStatus);
+      } else {
+        setWaConnection((prev) => ({
+          ...prev,
+          state: 'Error',
+          connected: false,
+          error: 'WhatsApp service unavailable.\nPlease start/reconnect the WhatsApp service.'
+        }));
+        showNotification('error', 'WhatsApp service unavailable. Please start/reconnect the WhatsApp service.');
       }
     } catch {
-      showNotification('error', 'Unable to reach WhatsApp service.');
+      setWaConnection((prev) => ({
+        ...prev,
+        state: 'Error',
+        connected: false,
+        error: 'WhatsApp service unavailable.\nPlease start/reconnect the WhatsApp service.'
+      }));
+      showNotification('error', 'WhatsApp service unavailable. Please start/reconnect the WhatsApp service.');
     }
   };
 
   // Disconnect WhatsApp
   const handleDisconnectWhatsApp = async () => {
     try {
-      const res = await fetch('/api/whatsapp/disconnect', { method: 'POST' });
+      const res = await fetch(getApiUrl('/api/whatsapp/disconnect'), { method: 'POST' });
       if (res.ok) {
         const data = await res.json();
         setWaConnection(data.status || { state: 'Disconnected', connected: false, qr: null, accountInfo: null, error: null });
@@ -210,10 +269,14 @@ export default function App() {
   // Refresh QR (regenerates fresh session and QR from WhatsApp Web)
   const handleRefreshQr = async () => {
     try {
-      const res = await fetch('/api/whatsapp/refresh-qr', { method: 'POST' });
+      const res = await fetch(getApiUrl('/api/whatsapp/refresh-qr'), { method: 'POST' });
       if (res.ok) {
         const data = await res.json();
-        setWaConnection(data.status || data);
+        const nextStatus = data.status || data;
+        if (nextStatus.state === 'Error') {
+          nextStatus.error = sanitizeErrorMessage(nextStatus.error);
+        }
+        setWaConnection(nextStatus);
       }
     } catch {
       showNotification('error', 'Failed to refresh WhatsApp QR code.');
@@ -232,14 +295,14 @@ export default function App() {
     try {
       const formData = new FormData();
       formData.append('file', file);
-      const res = await fetch('/api/upload', {
+      const res = await fetch(getApiUrl('/api/upload'), {
         method: 'POST',
         body: formData
       });
       if (res.ok) {
         const data = await res.json();
         if (data.sampleCustomers && data.sampleCustomers.length > 0) {
-          const campaignRes = await fetch('/api/campaign/status');
+          const campaignRes = await fetch(getApiUrl('/api/campaign/status'));
           if (campaignRes.ok) {
             const campData = await campaignRes.json();
             if (campData.customers && campData.customers.length > 0) {
@@ -334,7 +397,7 @@ export default function App() {
     setCampaignStatus('sending');
 
     try {
-      const res = await fetch('/api/campaign/start', {
+      const res = await fetch(getApiUrl('/api/campaign/start'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -366,7 +429,7 @@ export default function App() {
     });
   };
 
-  const isConnected = waConnection.connected || waConnection.state === 'CONNECTED';
+  const isConnected = waConnection.connected || waConnection.state === 'Connected';
   const hasCustomers = customers.length > 0;
   const isSendEnabled = isConnected && hasCustomers && isMessageConfirmed && campaignStatus !== 'sending';
 
@@ -423,7 +486,7 @@ export default function App() {
                 <span className="w-2 h-2 rounded-full bg-emerald-500 mr-1.5 animate-pulse"></span>
                 🟢 Connected
               </span>
-            ) : waConnection.state === 'Initializing' || waConnection.state === 'Waiting for QR' || waConnection.state === 'Authenticating' ? (
+            ) : waConnection.state === 'Initializing' || waConnection.state === 'Waiting for QR' ? (
               <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200">
                 <span className="w-2 h-2 rounded-full bg-amber-500 mr-1.5 animate-pulse"></span>
                 🟡 Connecting
@@ -431,7 +494,17 @@ export default function App() {
             ) : waConnection.state === 'QR Ready' ? (
               <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-800 border border-amber-300">
                 <span className="w-2 h-2 rounded-full bg-amber-500 mr-1.5"></span>
-                📱 QR Ready
+                📱 Scan QR
+              </span>
+            ) : waConnection.state === 'Authenticating' ? (
+              <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                <span className="w-2 h-2 rounded-full bg-blue-500 mr-1.5 animate-pulse"></span>
+                🔵 Authenticating
+              </span>
+            ) : waConnection.state === 'Error' ? (
+              <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200">
+                <span className="w-2 h-2 rounded-full bg-rose-500 mr-1.5"></span>
+                ⚠️ Error
               </span>
             ) : (
               <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200">

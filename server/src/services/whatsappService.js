@@ -10,7 +10,11 @@ dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const AUTH_DIR = path.resolve(__dirname, '../../.wwebjs_auth');
+
+// Configurable WhatsApp Session Path (e.g. WHATSAPP_SESSION_PATH=./whatsapp-session)
+const SESSION_PATH = process.env.WHATSAPP_SESSION_PATH
+  ? path.resolve(process.cwd(), process.env.WHATSAPP_SESSION_PATH)
+  : path.resolve(__dirname, '../../whatsapp-session');
 
 // Helper to locate Chrome/Edge on Windows
 function getChromeExecutablePath() {
@@ -63,11 +67,11 @@ class WhatsAppService {
       'You are pre-qualified for an IDFC FIRST Bank loan. If you’re interested, please contact me.';
 
     try {
-      if (!fs.existsSync(AUTH_DIR)) {
-        fs.mkdirSync(AUTH_DIR, { recursive: true });
+      if (!fs.existsSync(SESSION_PATH)) {
+        fs.mkdirSync(SESSION_PATH, { recursive: true });
       }
     } catch (e) {
-      console.warn('[WhatsApp] Session directory warning:', e.message);
+      console.warn('[WhatsApp] Session directory creation warning:', e.message);
     }
   }
 
@@ -133,6 +137,11 @@ class WhatsAppService {
     this.notify();
 
     try {
+      // Ensure session directory exists recursively before client initialization
+      if (!fs.existsSync(SESSION_PATH)) {
+        fs.mkdirSync(SESSION_PATH, { recursive: true });
+      }
+
       const executablePath = getChromeExecutablePath();
       if (executablePath) {
         console.log(`[WhatsApp] Browser executable: ${executablePath}`);
@@ -141,7 +150,7 @@ class WhatsAppService {
       this.client = new Client({
         authStrategy: new LocalAuth({
           clientId: 'idfc_loan_client',
-          dataPath: AUTH_DIR
+          dataPath: SESSION_PATH
         }),
         puppeteer: {
           headless: true,
@@ -172,7 +181,7 @@ class WhatsAppService {
         ) {
           console.error('[WhatsApp] Error: Timeout waiting for WhatsApp QR code');
           this.state = ConnectionState.ERROR;
-          this.lastError = 'Unable to generate WhatsApp QR. Please click Retry Connection.';
+          this.lastError = 'WhatsApp service unavailable. Please start/reconnect the WhatsApp service.';
           this.notify();
           this.destroyClient().catch(() => {});
         }
@@ -294,7 +303,7 @@ class WhatsAppService {
       this.client.initialize().catch((initErr) => {
         console.error('[WhatsApp] Error during initialize:', initErr?.message || initErr);
         this.state = ConnectionState.ERROR;
-        this.lastError = initErr?.message || 'Failed to initialize browser';
+        this.lastError = 'WhatsApp service unavailable. Please start/reconnect the WhatsApp service.';
         this.isStarting = false;
         this.notify();
       });
@@ -302,12 +311,12 @@ class WhatsAppService {
       this.isStarting = false;
       return this.getStatus();
     } catch (err) {
-      console.error('[WhatsApp] Error:', err.message);
+      console.error('[WhatsApp] Error launching client:', err?.message || err);
       this.state = ConnectionState.ERROR;
-      this.lastError = err.message || 'Unable to launch WhatsApp Web';
+      this.lastError = 'WhatsApp service unavailable. Please start/reconnect the WhatsApp service.';
       this.isStarting = false;
       this.notify();
-      throw err;
+      return this.getStatus();
     }
   }
 

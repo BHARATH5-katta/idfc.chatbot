@@ -4,10 +4,16 @@ dist/
 build/
 
 # WhatsApp Session Persistence (Never commit auth session)
-.session/
-**/.session/
 .wwebjs_auth/
 **/.wwebjs_auth/
+.wwebjs_cache/
+**/.wwebjs_cache/
+whatsapp-session/
+**/whatsapp-session/
+whatsapp-auth/
+**/whatsapp-auth/
+.session/
+**/.session/
 
 # Environment Variables
 .env

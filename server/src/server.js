@@ -17,7 +17,55 @@ process.on('uncaughtException', (err) => {
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-app.use(cors());
+const isDev = process.env.NODE_ENV !== 'production';
+
+// Parse allowed origins from FRONTEND_URL or ALLOWED_ORIGINS env variables
+const configuredOrigins = [
+  process.env.FRONTEND_URL,
+  ...(process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : [])
+]
+  .map((o) => (o ? o.trim().replace(/\/+$/, '') : ''))
+  .filter(Boolean);
+
+// Development origins for local testing
+const devOrigins = [
+  'http://localhost:3000',
+  'http://localhost:5173',
+  'http://127.0.0.1:3000',
+  'http://127.0.0.1:5173'
+];
+
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      // Allow non-browser requests (curl, server-to-server, health checks)
+      if (!origin) return callback(null, true);
+
+      // In development mode, allow local dev servers
+      if (isDev && devOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      // Allow explicitly configured frontend domains
+      if (configuredOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      // Allow Vercel preview and production deployments
+      if (origin.endsWith('.vercel.app')) {
+        return callback(null, true);
+      }
+
+      // In development allow any origin with warning
+      if (isDev) {
+        return callback(null, true);
+      }
+
+      return callback(new Error(`Not allowed by CORS: ${origin}`));
+    },
+    credentials: true
+  })
+);
 app.use(express.json());
 
 // In-memory upload storage for Excel/CSV parsing

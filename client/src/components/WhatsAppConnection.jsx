@@ -62,22 +62,17 @@ export default function WhatsAppConnection({
           {isConnected ? (
             <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-2xs">
               <span className="w-2 h-2 rounded-full bg-emerald-500 mr-1.5 animate-pulse"></span>
-              <span>🟢 WhatsApp Connected</span>
+              <span>🟢 Connected</span>
             </span>
-          ) : isInitializing ? (
+          ) : isInitializing || isWaitingForQr ? (
             <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200 shadow-2xs">
               <RefreshCw className="w-3 h-3 mr-1.5 animate-spin text-amber-600" />
-              <span>🟡 Initializing</span>
-            </span>
-          ) : isWaitingForQr ? (
-            <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200 shadow-2xs">
-              <RefreshCw className="w-3 h-3 mr-1.5 animate-spin text-amber-600" />
-              <span>🟡 Waiting for QR</span>
+              <span>🟡 Connecting</span>
             </span>
           ) : isQrReady ? (
             <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-bold bg-amber-50 text-amber-800 border border-amber-300 shadow-2xs">
               <QrCode className="w-3 h-3 mr-1.5 text-amber-600" />
-              <span>📱 QR Ready</span>
+              <span>📱 Scan QR</span>
             </span>
           ) : isAuthenticating ? (
             <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-bold bg-blue-50 text-blue-700 border border-blue-200 shadow-2xs">
@@ -87,12 +82,12 @@ export default function WhatsAppConnection({
           ) : isError ? (
             <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200 shadow-2xs">
               <AlertCircle className="w-3 h-3 mr-1.5 text-rose-600" />
-              <span>⚠️ Connection Error</span>
+              <span>⚠️ Error</span>
             </span>
           ) : (
             <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200 shadow-2xs">
               <span className="w-2 h-2 rounded-full bg-rose-500 mr-1.5"></span>
-              <span>🔴 Not Connected</span>
+              <span>🔴 Disconnected</span>
             </span>
           )}
         </div>
@@ -127,8 +122,10 @@ export default function WhatsAppConnection({
         ) : isError ? (
           <>
             <div className="text-xs text-rose-800">
-              <p className="font-bold">Unable to generate WhatsApp QR</p>
-              <p className="text-rose-600 text-[11px]">{errorMessage || 'Connection failed or timed out.'}</p>
+              <p className="font-bold">WhatsApp service unavailable.</p>
+              <p className="text-rose-600 text-[11px] whitespace-pre-line">
+                Please start/reconnect the WhatsApp service.
+              </p>
             </div>
             <button
               type="button"
@@ -267,8 +264,8 @@ export default function WhatsAppConnection({
                 ) : isError ? (
                   <div className="flex flex-col items-center justify-center space-y-2 text-slate-600 p-4">
                     <AlertCircle className="w-10 h-10 text-rose-600" />
-                    <p className="text-sm font-bold text-rose-800">Unable to generate WhatsApp QR</p>
-                    <p className="text-xs text-slate-400">{errorMessage || 'Connection timed out or failed.'}</p>
+                    <p className="text-sm font-bold text-rose-800">WhatsApp service unavailable.</p>
+                    <p className="text-xs text-slate-400">Please start/reconnect the WhatsApp service.</p>
                   </div>
                 ) : (
                   <div className="flex flex-col items-center justify-center space-y-2 text-slate-500 p-4">
