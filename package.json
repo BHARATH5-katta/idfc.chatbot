@@ -5,7 +5,8 @@
   "type": "module",
   "description": "IDFC FIRST Bank WhatsApp Auto-Messaging Chatbot for Pre-Qualified Loan Customers",
   "scripts": {
-    "build": "cd client && npm install && npm run build",
+    "build": "node scripts/build.js",
+    "vercel-build": "node scripts/build.js",
     "server": "npm run dev --prefix server",
     "client": "npm run dev --prefix client",
     "start": "node server/src/server.js"
