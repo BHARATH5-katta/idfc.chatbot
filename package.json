@@ -1,0 +1,13 @@
+{
+  "name": "idfc-whatsapp-auto-messaging",
+  "version": "1.0.0",
+  "private": true,
+  "description": "IDFC FIRST Bank WhatsApp Auto-Messaging Chatbot for Pre-Qualified Loan Customers",
+  "scripts": {
+    "server": "npm run dev --prefix server",
+    "client": "npm run dev --prefix client",
+    "start": "node server/src/server.js",
+    "build:client": "npm run build --prefix client"
+  }
+}
+
