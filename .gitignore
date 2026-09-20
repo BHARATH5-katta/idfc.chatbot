@@ -3,6 +3,12 @@ node_modules/
 dist/
 build/
 
+# WhatsApp Session Persistence (Never commit auth session)
+.session/
+**/.session/
+.wwebjs_auth/
+**/.wwebjs_auth/
+
 # Environment Variables
 .env
 .env.*
@@ -11,9 +17,12 @@ build/
 **/.env.*
 !**/.env.example
 
-# Temporary and Upload Files
+# Customer & Upload Data
 uploads/
 customer-data/
+*.xlsx
+*.xls
+*.csv
 
 # OS and IDE files
 .DS_Store

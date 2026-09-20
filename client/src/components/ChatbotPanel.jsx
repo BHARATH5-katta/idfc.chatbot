@@ -30,7 +30,9 @@ export default function ChatbotPanel({
   onStopCampaign,
   onReviewList,
   isUploading,
-  uploadStats
+  uploadStats,
+  whatsAppConnected,
+  onOpenWhatsAppModal
 }) {
   const fileInputRef = useRef(null);
   const [authorizedConsent, setAuthorizedConsent] = useState(false);
@@ -109,17 +111,16 @@ export default function ChatbotPanel({
         <div className="flex items-center space-x-2">
           <button
             type="button"
-            onClick={onOpenSettings}
-            className={`text-xs px-3 py-1.5 rounded-full font-semibold border transition-all flex items-center space-x-1.5 ${
-              isConnected
-                ? isDemo
-                  ? 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
-                  : 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100'
-                : 'bg-rose-50 text-rose-800 border-rose-200 hover:bg-rose-100'
+            onClick={onOpenWhatsAppModal || onOpenSettings}
+            className={`text-xs px-3 py-1.5 rounded-full font-bold border transition-all flex items-center space-x-1.5 shadow-2xs ${
+              whatsAppConnected
+                ? 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100'
+                : 'bg-rose-50 text-rose-800 border-rose-300 hover:bg-rose-100'
             }`}
+            title={whatsAppConnected ? 'WhatsApp is linked & active' : 'Click to connect WhatsApp device'}
           >
-            <span className={`w-2 h-2 rounded-full ${isConnected ? (isDemo ? 'bg-amber-500' : 'bg-emerald-500') : 'bg-rose-500'}`}></span>
-            <span>{isConnected ? (isDemo ? 'Demo Mode' : 'WhatsApp API') : 'Disconnected'}</span>
+            <span className={`w-2 h-2 rounded-full ${whatsAppConnected ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`}></span>
+            <span>{whatsAppConnected ? '🟢 WhatsApp Connected' : '🔴 WhatsApp Disconnected'}</span>
           </button>
         </div>
       </div>
@@ -282,25 +283,50 @@ export default function ChatbotPanel({
 
               {/* Action Buttons: [REVIEW LIST] and [CONFIRM & SEND] */}
               {status === 'ready' || status === 'idle' ? (
-                <div className="grid grid-cols-2 gap-3 pt-1">
-                  <button
-                    type="button"
-                    onClick={onReviewList}
-                    className="py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-all flex items-center justify-center space-x-1.5 border border-slate-300"
-                  >
-                    <Eye className="w-3.5 h-3.5" />
-                    <span>[REVIEW LIST]</span>
-                  </button>
+                <div className="space-y-3 pt-1">
+                  {!whatsAppConnected ? (
+                    <div className="p-3 rounded-xl border border-rose-200 bg-rose-50/90 text-rose-900 text-xs flex items-center justify-between shadow-2xs">
+                      <div className="flex items-center space-x-2">
+                        <span className="w-2.5 h-2.5 rounded-full bg-rose-500 shrink-0"></span>
+                        <span className="font-semibold">
+                          🔴 WhatsApp Disconnected. Link device before campaign.
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={onOpenWhatsAppModal}
+                        className="px-3 py-1.5 text-xs font-bold bg-[#9E1B32] hover:bg-[#831427] text-white rounded-lg transition-colors shrink-0 shadow-xs"
+                      >
+                        [ Connect WhatsApp ]
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="p-2.5 rounded-xl border border-emerald-200 bg-emerald-50/80 text-emerald-800 text-xs flex items-center space-x-2">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0"></span>
+                      <span className="font-semibold">🟢 WhatsApp Connected & Ready for Outreach</span>
+                    </div>
+                  )}
 
-                  <button
-                    type="button"
-                    onClick={onStartCampaign}
-                    disabled={!isTestVerified || !authorizedConsent || isRunning}
-                    className="py-2.5 px-4 bg-[#9E1B32] hover:bg-[#831427] text-white font-bold text-xs rounded-xl shadow-md transition-all flex items-center justify-center space-x-1.5 disabled:opacity-40 disabled:cursor-not-allowed hover:shadow-lg hover:scale-101 active:scale-99"
-                  >
-                    <Play className="w-3.5 h-3.5 fill-white" />
-                    <span>[CONFIRM & SEND]</span>
-                  </button>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      type="button"
+                      onClick={onReviewList}
+                      className="py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-all flex items-center justify-center space-x-1.5 border border-slate-300"
+                    >
+                      <Eye className="w-3.5 h-3.5" />
+                      <span>[REVIEW LIST]</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={onStartCampaign}
+                      disabled={!isTestVerified || !authorizedConsent || isRunning || !whatsAppConnected}
+                      className="py-2.5 px-4 bg-[#9E1B32] hover:bg-[#831427] text-white font-bold text-xs rounded-xl shadow-md transition-all flex items-center justify-center space-x-1.5 disabled:opacity-40 disabled:cursor-not-allowed hover:shadow-lg hover:scale-101 active:scale-99"
+                    >
+                      <Play className="w-3.5 h-3.5 fill-white" />
+                      <span>[CONFIRM & SEND]</span>
+                    </button>
+                  </div>
                 </div>
               ) : null}
 

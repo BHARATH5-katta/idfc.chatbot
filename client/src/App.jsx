@@ -8,6 +8,7 @@ import LoanPortfolioOverview from './components/LoanPortfolioOverview';
 import WhatsAppConfigModal from './components/WhatsAppConfigModal';
 import TestMessageModal from './components/TestMessageModal';
 import AuthScreen from './components/AuthScreen';
+import WhatsAppConnection from './components/WhatsAppConnection';
 import { Lock, CheckCircle2, AlertCircle } from 'lucide-react';
 
 const DEFAULT_MESSAGE =
@@ -38,13 +39,20 @@ export default function App() {
     }
   });
   const [activeTab, setActiveTab] = useState('chatbot');
+  const [waConnection, setWaConnection] = useState({
+    state: 'DISCONNECTED',
+    qrData: null,
+    sessionData: null,
+    error: null
+  });
+  const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
   const [whatsAppStatus, setWhatsAppStatus] = useState({
-    connected: true,
-    isDemoMode: true,
-    accountName: 'IDFC FIRST Bank Loan Outreach (Demo Sandbox)',
-    phoneNumber: '+91 98765 00000',
+    connected: false,
+    isDemoMode: false,
+    accountName: 'IDFC FIRST Bank Loan Desk',
+    phoneNumber: '+91 98200 12345',
     qualityRating: 'GREEN',
-    status: 'Connected (Demo Mode Active)',
+    status: '🔴 WhatsApp Disconnected',
     templateName: 'idfc_loan_prequalified',
     customMessage: DEFAULT_MESSAGE
   });
@@ -76,21 +84,74 @@ export default function App() {
   const prevCompletedRef = useRef(false);
   const simulationTimerRef = useRef(null);
 
-  // Fetch initial WhatsApp status
+  // Fetch initial WhatsApp Linked Device status & subscribe to SSE
   const fetchWhatsAppStatus = async () => {
     try {
       const res = await fetch('/api/whatsapp/status');
       if (res.ok) {
         const data = await res.json();
-        setWhatsAppStatus(data);
+        setWaConnection(data);
+        if (data.state === 'CONNECTED') {
+          setWhatsAppStatus((prev) => ({
+            ...prev,
+            connected: true,
+            accountName: data.sessionData?.name || prev.accountName,
+            phoneNumber: data.sessionData?.phone || prev.phoneNumber,
+            status: '🟢 WhatsApp Connected'
+          }));
+        } else {
+          setWhatsAppStatus((prev) => ({
+            ...prev,
+            connected: false,
+            status: '🔴 WhatsApp Disconnected'
+          }));
+        }
       }
     } catch {
-      // Retain safe client-side default demo mode
+      // Backend not reached
     }
   };
 
   useEffect(() => {
     fetchWhatsAppStatus();
+
+    // Subscribe to WhatsApp Link Device SSE stream
+    let waEventSource = null;
+    try {
+      waEventSource = new EventSource('/api/whatsapp/stream');
+      waEventSource.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          setWaConnection(data);
+
+          if (data.state === 'CONNECTED') {
+            setIsWhatsAppModalOpen(false);
+            setWhatsAppStatus((prev) => ({
+              ...prev,
+              connected: true,
+              accountName: data.sessionData?.name || 'IDFC FIRST Bank Loan Desk Officer',
+              phoneNumber: data.sessionData?.phone || '+91 98200 12345',
+              status: '🟢 WhatsApp Connected'
+            }));
+            showNotification('success', '🟢 WhatsApp Connected successfully!');
+          } else if (data.state === 'DISCONNECTED') {
+            setWhatsAppStatus((prev) => ({
+              ...prev,
+              connected: false,
+              status: '🔴 WhatsApp Disconnected'
+            }));
+          }
+        } catch (err) {
+          console.error('Error parsing WhatsApp SSE data:', err);
+        }
+      };
+
+      waEventSource.onerror = () => {
+        waEventSource?.close();
+      };
+    } catch {
+      // SSE not available
+    }
 
     // Subscribe to Server-Sent Events for real-time campaign updates
     let eventSource = null;
@@ -116,18 +177,96 @@ export default function App() {
       };
 
       eventSource.onerror = () => {
-        // SSE disconnected, fallback to browser state
         eventSource?.close();
       };
     } catch {
-      // In static mode without backend SSE
+      // Static mode
     }
 
     return () => {
+      waEventSource?.close();
       eventSource?.close();
       if (simulationTimerRef.current) clearInterval(simulationTimerRef.current);
     };
   }, []);
+
+  const handleConnectWhatsApp = async () => {
+    setIsWhatsAppModalOpen(true);
+    try {
+      const res = await fetch('/api/whatsapp/connect', { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        setWaConnection((prev) => ({ ...prev, ...data }));
+      }
+    } catch {
+      showNotification('error', 'Unable to contact WhatsApp backend.');
+    }
+  };
+
+  const handleDisconnectWhatsApp = async () => {
+    try {
+      const res = await fetch('/api/whatsapp/disconnect', { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        setWaConnection((prev) => ({
+          ...prev,
+          ...data,
+          state: 'DISCONNECTED',
+          qrData: null,
+          sessionData: null
+        }));
+        setWhatsAppStatus((prev) => ({
+          ...prev,
+          connected: false,
+          status: '🔴 WhatsApp Disconnected'
+        }));
+        showNotification('info', '🔴 WhatsApp Disconnected.');
+      }
+    } catch {
+      showNotification('error', 'Failed to disconnect WhatsApp.');
+    }
+  };
+
+  const handleReconnectWhatsApp = async () => {
+    setIsWhatsAppModalOpen(true);
+    try {
+      const res = await fetch('/api/whatsapp/reconnect', { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        setWaConnection((prev) => ({ ...prev, ...data }));
+      }
+    } catch {
+      showNotification('error', 'Failed to re-initialize WhatsApp.');
+    }
+  };
+
+  const handleSimulateScan = async () => {
+    try {
+      const res = await fetch('/api/whatsapp/simulate-scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          phone: '+91 98200 12345',
+          name: currentUser?.name ? `${currentUser.name} (IDFC Loan Desk Officer)` : 'IDFC Loan Desk Officer'
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setWaConnection(data);
+        setIsWhatsAppModalOpen(false);
+        setWhatsAppStatus((prev) => ({
+          ...prev,
+          connected: true,
+          accountName: data.sessionData?.name || prev.accountName,
+          phoneNumber: data.sessionData?.phone || prev.phoneNumber,
+          status: '🟢 WhatsApp Connected'
+        }));
+        showNotification('success', '🟢 WhatsApp Connected via QR Scan!');
+      }
+    } catch {
+      showNotification('error', 'Failed to simulate QR scan.');
+    }
+  };
 
   const showNotification = (type, message) => {
     setNotification({ type, message });
@@ -516,7 +655,21 @@ export default function App() {
       )}
 
       {/* Main Workspace inside Loan Application */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8">
+      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 space-y-6">
+        {/* WhatsApp "Link Device" Connection Section */}
+        <WhatsAppConnection
+          connectionState={waConnection.state}
+          qrData={waConnection.qrData}
+          accountInfo={waConnection.sessionData}
+          errorMessage={waConnection.error}
+          onConnect={handleConnectWhatsApp}
+          onDisconnect={handleDisconnectWhatsApp}
+          onReconnect={handleReconnectWhatsApp}
+          onSimulateScan={handleSimulateScan}
+          isModalOpen={isWhatsAppModalOpen}
+          setIsModalOpen={setIsWhatsAppModalOpen}
+        />
+
         {/* Pipeline Tab */}
         {activeTab === 'pipeline' && (
           <LoanPortfolioOverview
@@ -562,6 +715,8 @@ export default function App() {
               <ChatbotPanel
                 campaignState={campaignState}
                 whatsAppStatus={whatsAppStatus}
+                whatsAppConnected={waConnection.state === 'CONNECTED'}
+                onOpenWhatsAppModal={handleConnectWhatsApp}
                 onFileUpload={handleFileUpload}
                 onLoadSample={handleLoadSample}
                 onOpenTestModal={() => setIsTestModalOpen(true)}

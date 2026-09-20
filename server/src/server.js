@@ -50,37 +50,9 @@ app.get('/api/campaign/stream', (req, res) => {
   });
 });
 
-// Get WhatsApp Status
-app.get('/api/whatsapp/status', async (req, res) => {
-  try {
-    const status = await whatsappService.getStatus();
-    res.json(status);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+import whatsappRouter from './routes/whatsapp.js';
 
-// Update WhatsApp Configuration
-app.post('/api/whatsapp/config', async (req, res) => {
-  try {
-    const { isDemoMode, phoneNumberId, wabaId, accessToken, templateName, languageCode, customMessage } = req.body;
-    const newConfig = {};
-    if (typeof isDemoMode === 'boolean') newConfig.isDemoMode = isDemoMode;
-    if (phoneNumberId !== undefined) newConfig.phoneNumberId = phoneNumberId.trim();
-    if (wabaId !== undefined) newConfig.wabaId = wabaId.trim();
-    if (accessToken !== undefined) newConfig.accessToken = accessToken.trim();
-    if (templateName !== undefined) newConfig.templateName = templateName.trim();
-    if (languageCode !== undefined) newConfig.languageCode = languageCode.trim();
-    if (customMessage !== undefined) newConfig.customMessage = customMessage.trim();
-
-    const status = await whatsappService.updateConfig(newConfig);
-    campaignQueue.addLog('info', `WhatsApp configuration updated. Mode: ${newConfig.isDemoMode ? 'Demo Sandbox' : 'Official WhatsApp Cloud API'}`);
-    campaignQueue.notify();
-    res.json({ success: true, status });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+app.use('/api/whatsapp', whatsappRouter);
 
 // Send Test Message (Mandatory Pre-requisite for Starting Campaign)
 app.post('/api/whatsapp/test-message', async (req, res) => {

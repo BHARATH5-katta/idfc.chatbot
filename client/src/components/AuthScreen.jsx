@@ -373,3 +373,4 @@ export default function AuthScreen({ onLoginSuccess }) {
     </div>
   );
 }
+
