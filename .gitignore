@@ -1,7 +1,22 @@
-﻿node_modules/
+# Dependencies
+node_modules/
+dist/
+build/
+
+# Environment Variables
 .env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+
+# Temporary and Upload Files
 uploads/
-*.xlsx
-*.xls
-*.csv
 customer-data/
+
+# OS and IDE files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
