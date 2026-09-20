@@ -106,3 +106,4 @@ This application is strictly designed for **pre-qualified loan customer outreach
 * Explicit representative authorization is required before every broadcast.
 * Recipient phone numbers are masked in all interface views.
 * Official Meta WhatsApp Cloud API endpoints are exclusively utilized.
+
