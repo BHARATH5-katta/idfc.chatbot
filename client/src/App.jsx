@@ -1,18 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
+import WhatsAppConnection from './components/WhatsAppConnection';
 import {
   CheckCircle2,
   AlertCircle,
-  QrCode,
-  Smartphone,
-  RefreshCw,
-  PowerOff,
   Upload,
   FileSpreadsheet,
   ShieldCheck,
-  X,
-  ExternalLink,
-  Clock,
   Send,
   RotateCcw
 } from 'lucide-react';
@@ -29,19 +23,17 @@ function maskPhone(p) {
 }
 
 export default function App() {
-  // WhatsApp Connection State
+  // Real WhatsApp Connection State (Strictly from Backend)
   const [waConnection, setWaConnection] = useState({
-    state: 'DISCONNECTED',
+    state: 'DISCONNECTED', // DISCONNECTED | CONNECTING | QR_READY | AUTHENTICATING | CONNECTED | AUTH_FAILURE | ERROR
     connected: false,
     qr: null,
-    qrExpiresAt: null,
     accountInfo: null,
     error: null
   });
   const [isQrModalOpen, setIsQrModalOpen] = useState(false);
-  const [qrCountdown, setQrCountdown] = useState(30);
 
-  // Customer List State (Starts completely empty - No mock data)
+  // Customer List State (No mock/demo data)
   const [customers, setCustomers] = useState([]);
   const [uploadSuccessMessage, setUploadSuccessMessage] = useState('');
   const [isUploading, setIsUploading] = useState(false);
@@ -70,7 +62,7 @@ export default function App() {
     setTimeout(() => setNotification(null), 4000);
   };
 
-  // Fetch initial WhatsApp connection status
+  // Fetch initial WhatsApp connection status from backend
   const fetchWhatsAppStatus = async () => {
     try {
       const res = await fetch('/api/whatsapp/status');
@@ -83,7 +75,7 @@ export default function App() {
     }
   };
 
-  // WhatsApp SSE stream listener
+  // WhatsApp SSE stream listener (Backend is source of truth)
   useEffect(() => {
     fetchWhatsAppStatus();
 
@@ -95,9 +87,12 @@ export default function App() {
           const data = JSON.parse(event.data);
           setWaConnection(data);
 
+          // When real authentication succeeds
           if (data.state === 'CONNECTED') {
             setIsQrModalOpen(false);
-            showNotification('success', '🟢 WhatsApp Connected successfully!');
+            showNotification('success', '🟢 WhatsApp Connected! WhatsApp is ready.');
+          } else if (data.state === 'AUTH_FAILURE') {
+            showNotification('error', '🔴 WhatsApp authentication failed.');
           }
         } catch (err) {
           console.error('Error parsing WhatsApp SSE data:', err);
@@ -160,21 +155,7 @@ export default function App() {
     };
   }, []);
 
-  // QR Countdown Timer
-  useEffect(() => {
-    let timer = null;
-    if (isQrModalOpen && waConnection.qr) {
-      setQrCountdown(30);
-      timer = setInterval(() => {
-        setQrCountdown((prev) => (prev > 1 ? prev - 1 : 30));
-      }, 1000);
-    }
-    return () => {
-      if (timer) clearInterval(timer);
-    };
-  }, [isQrModalOpen, waConnection.qr]);
-
-  // Connect WhatsApp
+  // Connect WhatsApp (calls backend whatsapp-web.js session)
   const handleConnectWhatsApp = async () => {
     setIsQrModalOpen(true);
     try {
@@ -202,39 +183,16 @@ export default function App() {
     }
   };
 
-  // Reconnect WhatsApp
-  const handleReconnectWhatsApp = async () => {
-    setIsQrModalOpen(true);
+  // Refresh QR (regenerates fresh session and QR from WhatsApp Web)
+  const handleRefreshQr = async () => {
     try {
-      const res = await fetch('/api/whatsapp/reconnect', { method: 'POST' });
+      const res = await fetch('/api/whatsapp/refresh-qr', { method: 'POST' });
       if (res.ok) {
         const data = await res.json();
         setWaConnection(data.status || data);
       }
     } catch {
-      showNotification('error', 'Failed to reconnect WhatsApp.');
-    }
-  };
-
-  // Simulate Phone Scan for instant verification
-  const handleSimulateScan = async () => {
-    try {
-      const res = await fetch('/api/whatsapp/simulate-scan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          phone: '+91 98201 23456',
-          name: 'IDFC FIRST Loan Officer'
-        })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setWaConnection(data.status || data);
-        setIsQrModalOpen(false);
-        showNotification('success', '🟢 WhatsApp Connected via QR Scan!');
-      }
-    } catch {
-      showNotification('error', 'Failed to simulate QR scan.');
+      showNotification('error', 'Failed to refresh WhatsApp QR code.');
     }
   };
 
@@ -346,48 +304,6 @@ export default function App() {
     }
   };
 
-  // Client Simulation Dispatcher (if backend campaign is offline)
-  const runClientSendingSimulation = () => {
-    setCampaignStatus('sending');
-    let currentIndex = 0;
-
-    simulationTimerRef.current = setInterval(() => {
-      setCustomers((prevCustomers) => {
-        if (currentIndex >= prevCustomers.length) {
-          clearInterval(simulationTimerRef.current);
-          setCampaignStatus('completed');
-          return prevCustomers;
-        }
-
-        const updated = [...prevCustomers];
-        const isSimulatedFail = updated[currentIndex].phone.endsWith('0000');
-        updated[currentIndex] = {
-          ...updated[currentIndex],
-          status: isSimulatedFail ? 'failed' : 'sent'
-        };
-
-        const sent = updated.filter((c) => c.status === 'sent').length;
-        const failed = updated.filter((c) => c.status === 'failed').length;
-        const remaining = updated.length - (sent + failed);
-
-        setCampaignStats({
-          total: updated.length,
-          sent,
-          failed,
-          remaining
-        });
-
-        if (sent + failed >= updated.length) {
-          clearInterval(simulationTimerRef.current);
-          setCampaignStatus('completed');
-        }
-
-        currentIndex++;
-        return updated;
-      });
-    }, 400);
-  };
-
   // Start Sending Campaign
   const handleConfirmAndSend = async () => {
     setIsConfirmModalOpen(false);
@@ -404,18 +320,16 @@ export default function App() {
       });
 
       if (res.ok) {
-        showNotification('success', 'Sending WhatsApp messages in progress...');
+        showNotification('success', 'Sending WhatsApp messages via linked device...');
         return;
       }
     } catch {
-      // Backend unavailable, run client-side simulation
+      showNotification('error', 'Failed to communicate with campaign server.');
+      setCampaignStatus('idle');
     }
-
-    runClientSendingSimulation();
-    showNotification('success', 'Sending WhatsApp messages in progress...');
   };
 
-  // Reset / New Campaign
+  // Reset Campaign
   const handleReset = () => {
     if (simulationTimerRef.current) clearInterval(simulationTimerRef.current);
     setCampaignStatus('idle');
@@ -478,7 +392,7 @@ export default function App() {
             </div>
           </div>
 
-          {/* Clean Top Connection Pill */}
+          {/* Top Status Badge */}
           <div>
             {isConnected ? (
               <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
@@ -497,90 +411,18 @@ export default function App() {
 
       {/* Main Container */}
       <main className="flex-1 max-w-4xl w-full mx-auto p-4 sm:p-6 space-y-6">
-        {/* 2. WhatsApp Connection Card */}
-        <section className="bg-white rounded-2xl border border-slate-200 shadow-xs p-5 sm:p-6 space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <div
-                className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold text-white shadow-xs ${
-                  isConnected ? 'bg-emerald-600' : 'bg-slate-700'
-                }`}
-              >
-                <Smartphone className="w-5 h-5" />
-              </div>
-              <div>
-                <h2 className="text-base font-bold text-slate-900">WhatsApp Connection</h2>
-                <p className="text-xs text-slate-500">
-                  Link your authorized WhatsApp device to dispatch approved customer communications
-                </p>
-              </div>
-            </div>
-
-            {/* Status indicator */}
-            <div>
-              {isConnected ? (
-                <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-2xs">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 mr-1.5 animate-pulse"></span>
-                  🟢 WhatsApp Connected
-                </span>
-              ) : (
-                <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200 shadow-2xs">
-                  <span className="w-2 h-2 rounded-full bg-rose-500 mr-1.5"></span>
-                  🔴 Not Connected
-                </span>
-              )}
-            </div>
-          </div>
-
-          {/* Connection Actions & Details */}
-          <div className="pt-2 flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-slate-100">
-            {isConnected ? (
-              <>
-                <div className="text-xs text-slate-600">
-                  <p className="font-semibold text-slate-800">
-                    {waConnection.accountInfo?.name || 'IDFC FIRST Loan Desk Officer'}
-                  </p>
-                  <p className="text-slate-500">
-                    Device: {waConnection.accountInfo?.device || 'WhatsApp Web (Linked Device)'} •{' '}
-                    {waConnection.accountInfo?.number || '+91 98201 23456'}
-                  </p>
-                </div>
-                <div className="flex items-center space-x-2 w-full sm:w-auto justify-end">
-                  <button
-                    type="button"
-                    onClick={handleReconnectWhatsApp}
-                    className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-colors flex items-center space-x-1.5"
-                  >
-                    <RefreshCw className="w-3.5 h-3.5" />
-                    <span>Reconnect</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleDisconnectWhatsApp}
-                    className="px-3.5 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold rounded-xl transition-colors flex items-center space-x-1.5"
-                  >
-                    <PowerOff className="w-3.5 h-3.5" />
-                    <span>Disconnect</span>
-                  </button>
-                </div>
-              </>
-            ) : (
-              <>
-                <p className="text-xs text-slate-500">
-                  Click to generate a secure pairing QR code to link your WhatsApp phone.
-                </p>
-                <button
-                  type="button"
-                  onClick={handleConnectWhatsApp}
-                  className="w-full sm:w-auto px-5 py-2.5 bg-[#9E1B32] hover:bg-[#831427] text-white text-xs font-bold rounded-xl shadow-xs transition-all flex items-center justify-center space-x-2 hover:scale-101 active:scale-99"
-                >
-                  <QrCode className="w-4 h-4" />
-                  <span>Connect WhatsApp</span>
-                </button>
-              </>
-            )}
-          </div>
-        </section>
+        {/* 2. WhatsApp Connection Card (Using Real WhatsApp Web Session) */}
+        <WhatsAppConnection
+          connectionState={waConnection.state}
+          qrData={waConnection.qr}
+          accountInfo={waConnection.accountInfo}
+          errorMessage={waConnection.error}
+          onConnect={handleConnectWhatsApp}
+          onDisconnect={handleDisconnectWhatsApp}
+          onRefreshQr={handleRefreshQr}
+          isModalOpen={isQrModalOpen}
+          setIsModalOpen={setIsQrModalOpen}
+        />
 
         {/* 3. Customer List Card */}
         <section className="bg-white rounded-2xl border border-slate-200 shadow-xs p-5 sm:p-6 space-y-4">
@@ -845,103 +687,6 @@ export default function App() {
               >
                 Confirm & Send
               </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* QR Code Modal for "Link a Device" */}
-      {isQrModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200 animate-in fade-in zoom-in duration-200">
-            {/* Header */}
-            <div className="bg-gradient-to-r from-[#9E1B32] to-[#7A1426] px-6 py-4 text-white flex items-center justify-between">
-              <div className="flex items-center space-x-2.5">
-                <QrCode className="w-5 h-5 text-white" />
-                <div>
-                  <h3 className="font-bold text-sm">Link WhatsApp Account</h3>
-                  <p className="text-[11px] text-red-100">Scan QR to connect loan outreach device</p>
-                </div>
-              </div>
-              <button
-                onClick={() => setIsQrModalOpen(false)}
-                className="text-white/80 hover:text-white p-1 rounded-lg hover:bg-white/10 transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Modal Body */}
-            <div className="p-6 text-center space-y-4">
-              {/* Instructions */}
-              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 text-left text-xs text-slate-700 space-y-2">
-                <div className="flex items-center justify-between">
-                  <p className="font-bold text-slate-900 text-xs uppercase tracking-wide">
-                    Linked Devices Setup
-                  </p>
-                  <a
-                    href="https://web.whatsapp.com/"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-[11px] font-semibold text-[#9E1B32] hover:underline flex items-center space-x-1"
-                  >
-                    <span>web.whatsapp.com</span>
-                    <ExternalLink className="w-3 h-3" />
-                  </a>
-                </div>
-                <div className="space-y-1 text-slate-600 text-[11px]">
-                  <p>Open <strong>WhatsApp</strong> → <strong>Linked Devices</strong> → <strong>Link a Device</strong> → <strong>Scan this QR code.</strong></p>
-                </div>
-              </div>
-
-              {/* QR Code Container */}
-              <div className="relative mx-auto w-64 h-64 p-3 bg-white rounded-2xl border-2 border-slate-200 shadow-inner flex items-center justify-center">
-                {waConnection.qr ? (
-                  <div className="relative w-full h-full flex items-center justify-center">
-                    <img
-                      src={waConnection.qr}
-                      alt="WhatsApp Link Device QR Code"
-                      className="w-full h-full object-contain rounded-xl"
-                    />
-                    {/* Centered Bank Icon */}
-                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                      <div className="w-9 h-9 rounded-lg bg-white shadow-md border border-slate-200 flex items-center justify-center">
-                        <span className="font-black text-xs text-[#9E1B32]">IDFC</span>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex flex-col items-center justify-center space-y-2 text-slate-500">
-                    <RefreshCw className="w-8 h-8 text-[#9E1B32] animate-spin" />
-                    <p className="text-xs font-semibold">Generating WhatsApp QR code...</p>
-                  </div>
-                )}
-              </div>
-
-              {/* Countdown & Refresh Indicator */}
-              {waConnection.qr && (
-                <div className="flex items-center justify-center space-x-1.5 text-xs text-slate-500 font-medium">
-                  <Clock className="w-3.5 h-3.5 text-slate-400" />
-                  <span>
-                    Auto-refreshing QR in <strong className="text-slate-800">{qrCountdown}s</strong>
-                  </span>
-                </div>
-              )}
-
-              {/* Test Phone Scan Button */}
-              <div className="pt-2 border-t border-slate-100 space-y-2">
-                <button
-                  type="button"
-                  onClick={handleSimulateScan}
-                  className="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center space-x-2"
-                >
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>Simulate Phone Scan (Instant Connect)</span>
-                </button>
-                <p className="text-[10px] text-slate-400">
-                  Simulates authorized device camera scan for verification without physical phone.
-                </p>
-              </div>
             </div>
           </div>
         </div>

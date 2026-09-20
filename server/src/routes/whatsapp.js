@@ -66,38 +66,32 @@ router.post('/connect', async (req, res) => {
 });
 
 // POST /api/whatsapp/disconnect
-router.post('/disconnect', (req, res) => {
+router.post('/disconnect', async (req, res) => {
   try {
-    const status = whatsappService.disconnect();
+    const status = await whatsappService.disconnect();
     res.json({ success: true, status });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// POST /api/whatsapp/reconnect
+// POST /api/whatsapp/refresh-qr & POST /api/whatsapp/reconnect
+router.post('/refresh-qr', async (req, res) => {
+  try {
+    const status = await whatsappService.refreshQr();
+    res.json({ success: true, status });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/reconnect', async (req, res) => {
   try {
-    const status = await whatsappService.reconnect();
+    const status = await whatsappService.refreshQr();
     res.json({ success: true, status });
   } catch (err) {
     res.status(500).json({ error: err.message });
-  }
-});
-
-// POST /api/whatsapp/simulate-scan (For testing / instant phone scan confirmation)
-router.post('/simulate-scan', async (req, res) => {
-  try {
-    const { officerName, phoneNumber } = req.body || {};
-    const status = await whatsappService.confirmScan({
-      name: officerName || 'IDFC FIRST Loan Officer',
-      phoneNumber: phoneNumber || '+91 98201 23456'
-    });
-    res.json({ success: true, status });
-  } catch (err) {
-    res.status(400).json({ error: err.message });
   }
 });
 
 export default router;
-
