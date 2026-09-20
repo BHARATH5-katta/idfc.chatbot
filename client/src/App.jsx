@@ -16,7 +16,11 @@ const APPROVED_MESSAGE =
 
 // Persistent Node.js backend configuration (e.g. from Vercel env VITE_WHATSAPP_BACKEND_URL)
 const BACKEND_URL = (import.meta.env.VITE_WHATSAPP_BACKEND_URL || '').replace(/\/+$/, '');
-const getApiUrl = (endpoint) => (BACKEND_URL ? `${BACKEND_URL}${endpoint}` : endpoint);
+const getApiUrl = (endpoint) => {
+  if (BACKEND_URL) return `${BACKEND_URL}${endpoint}`;
+  if (import.meta.env.DEV) return endpoint; // Vite dev server proxy to http://localhost:5000
+  return null;
+};
 
 function sanitizeErrorMessage(msg) {
   if (!msg) return 'WhatsApp service unavailable.\nPlease start/reconnect the WhatsApp service.';
@@ -83,8 +87,19 @@ export default function App() {
 
   // Fetch initial WhatsApp connection status from backend
   const fetchWhatsAppStatus = async () => {
+    const url = getApiUrl('/api/whatsapp/status');
+    if (!url) {
+      setWaConnection((prev) => ({
+        ...prev,
+        state: 'Error',
+        connected: false,
+        error: 'WhatsApp service unavailable.\nPlease configure VITE_WHATSAPP_BACKEND_URL.'
+      }));
+      return;
+    }
+
     try {
-      const res = await fetch(getApiUrl('/api/whatsapp/status'));
+      const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
         if (data.state === 'Error') {
@@ -115,9 +130,12 @@ export default function App() {
     const activeStates = ['Initializing', 'Waiting for QR', 'Authenticating'];
     if (!activeStates.includes(waConnection.state)) return;
 
+    const url = getApiUrl('/api/whatsapp/status');
+    if (!url) return;
+
     const intervalId = setInterval(async () => {
       try {
-        const res = await fetch(getApiUrl('/api/whatsapp/status'));
+        const res = await fetch(url);
         if (res.ok) {
           const data = await res.json();
           if (data.state === 'Error') {
@@ -142,33 +160,36 @@ export default function App() {
     fetchWhatsAppStatus();
 
     let waEventSource = null;
-    try {
-      waEventSource = new EventSource(getApiUrl('/api/whatsapp/stream'));
-      waEventSource.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          if (data.state === 'Error') {
-            data.error = sanitizeErrorMessage(data.error);
-          }
-          setWaConnection(data);
+    const streamUrl = getApiUrl('/api/whatsapp/stream');
+    if (streamUrl) {
+      try {
+        waEventSource = new EventSource(streamUrl);
+        waEventSource.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.state === 'Error') {
+              data.error = sanitizeErrorMessage(data.error);
+            }
+            setWaConnection(data);
 
-          // When real authentication succeeds
-          if (data.state === 'Connected' || data.connected) {
-            setIsQrModalOpen(false);
-            showNotification('success', '🟢 WhatsApp Connected! WhatsApp is ready.');
-          } else if (data.state === 'Error') {
-            showNotification('error', sanitizeErrorMessage(data.error));
+            // When real authentication succeeds
+            if (data.state === 'Connected' || data.connected) {
+              setIsQrModalOpen(false);
+              showNotification('success', '🟢 WhatsApp Connected! WhatsApp is ready.');
+            } else if (data.state === 'Error') {
+              showNotification('error', sanitizeErrorMessage(data.error));
+            }
+          } catch (err) {
+            console.error('Error parsing WhatsApp SSE data:', err);
           }
-        } catch (err) {
-          console.error('Error parsing WhatsApp SSE data:', err);
-        }
-      };
+        };
 
-      waEventSource.onerror = () => {
-        waEventSource?.close();
-      };
-    } catch {
-      // SSE unavailable
+        waEventSource.onerror = () => {
+          waEventSource?.close();
+        };
+      } catch {
+        // SSE unavailable
+      }
     }
 
     // Campaign SSE stream listener
@@ -223,8 +244,20 @@ export default function App() {
   // Connect WhatsApp (calls backend whatsapp-web.js session)
   const handleConnectWhatsApp = async () => {
     setIsQrModalOpen(true);
+    const url = getApiUrl('/api/whatsapp/connect');
+    if (!url) {
+      setWaConnection((prev) => ({
+        ...prev,
+        state: 'Error',
+        connected: false,
+        error: 'WhatsApp service unavailable.\nPlease configure VITE_WHATSAPP_BACKEND_URL.'
+      }));
+      showNotification('error', 'WhatsApp service unavailable. Please configure VITE_WHATSAPP_BACKEND_URL.');
+      return;
+    }
+
     try {
-      const res = await fetch(getApiUrl('/api/whatsapp/connect'), { method: 'POST' });
+      const res = await fetch(url, { method: 'POST' });
       if (res.ok) {
         const data = await res.json();
         const nextStatus = data.status || data;
@@ -254,8 +287,10 @@ export default function App() {
 
   // Disconnect WhatsApp
   const handleDisconnectWhatsApp = async () => {
+    const url = getApiUrl('/api/whatsapp/disconnect');
+    if (!url) return;
     try {
-      const res = await fetch(getApiUrl('/api/whatsapp/disconnect'), { method: 'POST' });
+      const res = await fetch(url, { method: 'POST' });
       if (res.ok) {
         const data = await res.json();
         setWaConnection(data.status || { state: 'Disconnected', connected: false, qr: null, accountInfo: null, error: null });
@@ -268,8 +303,10 @@ export default function App() {
 
   // Refresh QR (regenerates fresh session and QR from WhatsApp Web)
   const handleRefreshQr = async () => {
+    const url = getApiUrl('/api/whatsapp/refresh-qr');
+    if (!url) return;
     try {
-      const res = await fetch(getApiUrl('/api/whatsapp/refresh-qr'), { method: 'POST' });
+      const res = await fetch(url, { method: 'POST' });
       if (res.ok) {
         const data = await res.json();
         const nextStatus = data.status || data;

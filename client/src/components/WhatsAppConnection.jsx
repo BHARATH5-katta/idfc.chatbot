@@ -122,8 +122,8 @@ export default function WhatsAppConnection({
         ) : isError ? (
           <>
             <div className="text-xs text-rose-800">
-              <p className="font-bold">WhatsApp service unavailable.</p>
-              <p className="text-rose-600 text-[11px] whitespace-pre-line">
+              <p className="font-bold text-sm">WhatsApp service unavailable</p>
+              <p className="text-rose-600 text-[11px] whitespace-pre-line mt-0.5">
                 Please start/reconnect the WhatsApp service.
               </p>
             </div>
@@ -264,7 +264,7 @@ export default function WhatsAppConnection({
                 ) : isError ? (
                   <div className="flex flex-col items-center justify-center space-y-2 text-slate-600 p-4">
                     <AlertCircle className="w-10 h-10 text-rose-600" />
-                    <p className="text-sm font-bold text-rose-800">WhatsApp service unavailable.</p>
+                    <p className="text-sm font-bold text-rose-800">WhatsApp service unavailable</p>
                     <p className="text-xs text-slate-400">Please start/reconnect the WhatsApp service.</p>
                   </div>
                 ) : (
