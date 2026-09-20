@@ -2,6 +2,12 @@
   "version": 2,
   "buildCommand": "node scripts/build.js",
   "outputDirectory": "dist",
+  "functions": {
+    "api/index.js": {
+      "maxDuration": 30,
+      "memory": 1024
+    }
+  },
   "rewrites": [
     {
       "source": "/api/(.*)",

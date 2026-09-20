@@ -223,7 +223,13 @@ app.get('/api/campaign/status', (req, res) => {
   res.json(campaignQueue.getState());
 });
 
-if (!process.env.VERCEL) {
+// Only listen when executed directly, not when imported as a Vercel serverless function
+const isDirectRun = process.argv[1] && (
+  process.argv[1].endsWith('server.js') || 
+  process.argv[1].endsWith('server')
+);
+
+if (isDirectRun && !process.env.VERCEL) {
   app.listen(PORT, () => {
     console.log(`🚀 IDFC WhatsApp Campaign Server running on http://localhost:${PORT}`);
   });
