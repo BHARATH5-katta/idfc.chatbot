@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import WhatsAppConnection from './components/WhatsAppConnection';
+import BackendConfigModal from './components/BackendConfigModal';
 import {
   CheckCircle2,
   AlertCircle,
@@ -14,25 +15,31 @@ import {
 const APPROVED_MESSAGE =
   'You are pre-qualified for an IDFC FIRST Bank loan. If you’re interested, please contact me.';
 
-// Persistent Node.js backend configuration (e.g. from Vercel env VITE_WHATSAPP_BACKEND_URL)
-const BACKEND_URL = (import.meta.env.VITE_WHATSAPP_BACKEND_URL || '').replace(/\/+$/, '');
-const getApiUrl = (endpoint) => {
-  if (BACKEND_URL) return `${BACKEND_URL}${endpoint}`;
-  if (import.meta.env.DEV) return endpoint; // Vite dev server proxy to http://localhost:5000
-  return null;
-};
+// Persistent Node.js backend configuration (supports localStorage override and Vercel build-time env)
+function getInitialBackendUrl() {
+  if (typeof window !== 'undefined') {
+    const override = localStorage.getItem('whatsapp_backend_url');
+    if (override && override.trim()) {
+      return override.trim().replace(/\/+$/, '');
+    }
+  }
+  return (import.meta.env.VITE_WHATSAPP_BACKEND_URL || '').trim().replace(/\/+$/, '');
+}
 
 function sanitizeErrorMessage(msg) {
-  if (!msg) return 'WhatsApp service unavailable.\nPlease start/reconnect the WhatsApp service.';
-  if (typeof msg !== 'string') return 'WhatsApp service unavailable.\nPlease start/reconnect the WhatsApp service.';
+  if (!msg) return 'Backend is not reachable.';
+  if (typeof msg !== 'string') return 'Backend is not reachable.';
   if (
     msg.includes('/var/task') ||
     msg.includes('ENOENT') ||
     msg.includes('node_modules') ||
     msg.includes('mkdir') ||
-    msg.includes('.wwebjs_auth')
+    msg.includes('.wwebjs_auth') ||
+    msg.includes('Failed to fetch') ||
+    msg.includes('NetworkError') ||
+    msg.includes('Load failed')
   ) {
-    return 'WhatsApp service unavailable.\nPlease start/reconnect the WhatsApp service.';
+    return 'Backend is not reachable.';
   }
   return msg;
 }
@@ -46,6 +53,28 @@ function maskPhone(p) {
 }
 
 export default function App() {
+  const [backendUrl, setBackendUrl] = useState(getInitialBackendUrl);
+  const [isBackendModalOpen, setIsBackendModalOpen] = useState(false);
+
+  const getApiUrl = (endpoint) => {
+    if (backendUrl) return `${backendUrl}${endpoint}`;
+    if (import.meta.env.DEV) return endpoint; // In local dev Vite proxy forward
+    return null;
+  };
+
+  const handleSaveBackendUrl = (newUrl) => {
+    const cleaned = (newUrl || '').trim().replace(/\/+$/, '');
+    if (cleaned) {
+      localStorage.setItem('whatsapp_backend_url', cleaned);
+    } else {
+      localStorage.removeItem('whatsapp_backend_url');
+    }
+    setBackendUrl(cleaned);
+    setIsBackendModalOpen(false);
+    showNotification('success', 'Backend URL updated. Checking connection...');
+    fetchWhatsAppStatus(cleaned);
+  };
+
   // Real WhatsApp Connection State (Strictly from Backend)
   const [waConnection, setWaConnection] = useState({
     state: 'Disconnected', // Disconnected | Initializing | Waiting for QR | QR Ready | Authenticating | Connected | Error
@@ -86,14 +115,18 @@ export default function App() {
   };
 
   // Fetch initial WhatsApp connection status from backend
-  const fetchWhatsAppStatus = async () => {
-    const url = getApiUrl('/api/whatsapp/status');
+  const fetchWhatsAppStatus = async (overrideUrl) => {
+    const activeUrl = overrideUrl !== undefined ? overrideUrl : backendUrl;
+    const url = activeUrl
+      ? `${activeUrl}/api/whatsapp/status`
+      : (import.meta.env.DEV ? '/api/whatsapp/status' : null);
+
     if (!url) {
       setWaConnection((prev) => ({
         ...prev,
         state: 'Error',
         connected: false,
-        error: 'WhatsApp service unavailable.\nPlease configure VITE_WHATSAPP_BACKEND_URL.'
+        error: 'Backend is not reachable.'
       }));
       return;
     }
@@ -111,7 +144,7 @@ export default function App() {
           ...prev,
           state: 'Error',
           connected: false,
-          error: 'WhatsApp service unavailable.\nPlease start/reconnect the WhatsApp service.'
+          error: 'Backend is not reachable.'
         }));
       }
     } catch {
@@ -120,7 +153,7 @@ export default function App() {
         ...prev,
         state: 'Error',
         connected: false,
-        error: 'WhatsApp service unavailable.\nPlease start/reconnect the WhatsApp service.'
+        error: 'Backend is not reachable.'
       }));
     }
   };
@@ -177,7 +210,7 @@ export default function App() {
               setIsQrModalOpen(false);
               showNotification('success', '🟢 WhatsApp Connected! WhatsApp is ready.');
             } else if (data.state === 'Error') {
-              showNotification('error', sanitizeErrorMessage(data.error));
+              showNotification('error', 'WhatsApp service unavailable. Backend is not reachable.');
             }
           } catch (err) {
             console.error('Error parsing WhatsApp SSE data:', err);
@@ -194,44 +227,47 @@ export default function App() {
 
     // Campaign SSE stream listener
     let campaignEventSource = null;
-    try {
-      campaignEventSource = new EventSource(getApiUrl('/api/campaign/stream'));
-      campaignEventSource.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          if (data.status === 'running') {
-            setCampaignStatus('sending');
-            setCampaignStats({
-              total: data.stats?.total || 0,
-              sent: data.stats?.sent || 0,
-              failed: data.stats?.failed || 0,
-              remaining: data.stats?.remaining || 0
-            });
-            if (Array.isArray(data.customers)) {
-              setCustomers(data.customers);
+    const campaignStreamUrl = getApiUrl('/api/campaign/stream');
+    if (campaignStreamUrl) {
+      try {
+        campaignEventSource = new EventSource(campaignStreamUrl);
+        campaignEventSource.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.status === 'running') {
+              setCampaignStatus('sending');
+              setCampaignStats({
+                total: data.stats?.total || 0,
+                sent: data.stats?.sent || 0,
+                failed: data.stats?.failed || 0,
+                remaining: data.stats?.remaining || 0
+              });
+              if (Array.isArray(data.customers)) {
+                setCustomers(data.customers);
+              }
+            } else if (data.status === 'completed') {
+              setCampaignStatus('completed');
+              setCampaignStats({
+                total: data.stats?.total || 0,
+                sent: data.stats?.sent || 0,
+                failed: data.stats?.failed || 0,
+                remaining: 0
+              });
+              if (Array.isArray(data.customers)) {
+                setCustomers(data.customers);
+              }
             }
-          } else if (data.status === 'completed') {
-            setCampaignStatus('completed');
-            setCampaignStats({
-              total: data.stats?.total || 0,
-              sent: data.stats?.sent || 0,
-              failed: data.stats?.failed || 0,
-              remaining: 0
-            });
-            if (Array.isArray(data.customers)) {
-              setCustomers(data.customers);
-            }
+          } catch (err) {
+            console.error('Error parsing Campaign SSE data:', err);
           }
-        } catch (err) {
-          console.error('Error parsing Campaign SSE data:', err);
-        }
-      };
+        };
 
-      campaignEventSource.onerror = () => {
-        campaignEventSource?.close();
-      };
-    } catch {
-      // SSE unavailable
+        campaignEventSource.onerror = () => {
+          campaignEventSource?.close();
+        };
+      } catch {
+        // SSE unavailable
+      }
     }
 
     return () => {
@@ -239,7 +275,7 @@ export default function App() {
       campaignEventSource?.close();
       if (simulationTimerRef.current) clearInterval(simulationTimerRef.current);
     };
-  }, []);
+  }, [backendUrl]);
 
   // Connect WhatsApp (calls backend whatsapp-web.js session)
   const handleConnectWhatsApp = async () => {
@@ -250,9 +286,9 @@ export default function App() {
         ...prev,
         state: 'Error',
         connected: false,
-        error: 'WhatsApp service unavailable.\nPlease configure VITE_WHATSAPP_BACKEND_URL.'
+        error: 'Backend is not reachable.'
       }));
-      showNotification('error', 'WhatsApp service unavailable. Please configure VITE_WHATSAPP_BACKEND_URL.');
+      showNotification('error', 'WhatsApp service unavailable. Backend is not reachable.');
       return;
     }
 
@@ -270,18 +306,18 @@ export default function App() {
           ...prev,
           state: 'Error',
           connected: false,
-          error: 'WhatsApp service unavailable.\nPlease start/reconnect the WhatsApp service.'
+          error: 'Backend is not reachable.'
         }));
-        showNotification('error', 'WhatsApp service unavailable. Please start/reconnect the WhatsApp service.');
+        showNotification('error', 'WhatsApp service unavailable. Backend is not reachable.');
       }
     } catch {
       setWaConnection((prev) => ({
         ...prev,
         state: 'Error',
         connected: false,
-        error: 'WhatsApp service unavailable.\nPlease start/reconnect the WhatsApp service.'
+        error: 'Backend is not reachable.'
       }));
-      showNotification('error', 'WhatsApp service unavailable. Please start/reconnect the WhatsApp service.');
+      showNotification('error', 'WhatsApp service unavailable. Backend is not reachable.');
     }
   };
 
@@ -304,7 +340,10 @@ export default function App() {
   // Refresh QR (regenerates fresh session and QR from WhatsApp Web)
   const handleRefreshQr = async () => {
     const url = getApiUrl('/api/whatsapp/refresh-qr');
-    if (!url) return;
+    if (!url) {
+      fetchWhatsAppStatus();
+      return;
+    }
     try {
       const res = await fetch(url, { method: 'POST' });
       if (res.ok) {
@@ -314,9 +353,11 @@ export default function App() {
           nextStatus.error = sanitizeErrorMessage(nextStatus.error);
         }
         setWaConnection(nextStatus);
+      } else {
+        fetchWhatsAppStatus();
       }
     } catch {
-      showNotification('error', 'Failed to refresh WhatsApp QR code.');
+      fetchWhatsAppStatus();
     }
   };
 
@@ -561,9 +602,12 @@ export default function App() {
           qrData={waConnection.qr}
           accountInfo={waConnection.accountInfo}
           errorMessage={waConnection.error}
+          backendUrl={backendUrl}
           onConnect={handleConnectWhatsApp}
           onDisconnect={handleDisconnectWhatsApp}
           onRefreshQr={handleRefreshQr}
+          onRetry={() => fetchWhatsAppStatus()}
+          onOpenBackendConfig={() => setIsBackendModalOpen(true)}
           isModalOpen={isQrModalOpen}
           setIsModalOpen={setIsQrModalOpen}
         />
@@ -835,6 +879,15 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* Persistent Backend Configuration Modal */}
+      <BackendConfigModal
+        isOpen={isBackendModalOpen}
+        onClose={() => setIsBackendModalOpen(false)}
+        currentUrl={backendUrl}
+        defaultEnvUrl={import.meta.env.VITE_WHATSAPP_BACKEND_URL || ''}
+        onSave={handleSaveBackendUrl}
+      />
     </div>
   );
 }

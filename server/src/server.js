@@ -106,6 +106,14 @@ app.get('/api/campaign/stream', (req, res) => {
   });
 });
 
+// Health Check Endpoint
+app.get('/api/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    service: 'whatsapp-backend'
+  });
+});
+
 import whatsappRouter from './routes/whatsapp.js';
 
 app.use('/api/whatsapp', whatsappRouter);

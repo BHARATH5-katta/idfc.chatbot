@@ -7,7 +7,8 @@ import {
   RefreshCw,
   PowerOff,
   X,
-  ExternalLink
+  ExternalLink,
+  Settings
 } from 'lucide-react';
 
 export default function WhatsAppConnection({
@@ -15,9 +16,12 @@ export default function WhatsAppConnection({
   qrData = null,
   accountInfo = null,
   errorMessage = null,
+  backendUrl = '',
   onConnect,
   onDisconnect,
   onRefreshQr,
+  onRetry,
+  onOpenBackendConfig,
   isModalOpen,
   setIsModalOpen
 }) {
@@ -58,7 +62,18 @@ export default function WhatsAppConnection({
         </div>
 
         {/* Real Status Badge (Exclusively reflecting backend state) */}
-        <div>
+        <div className="flex items-center space-x-2">
+          {onOpenBackendConfig && (
+            <button
+              type="button"
+              onClick={onOpenBackendConfig}
+              className="px-2.5 py-1 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg text-xs font-semibold flex items-center space-x-1 transition-colors border border-slate-200 cursor-pointer"
+              title="Configure Persistent Backend URL"
+            >
+              <Settings className="w-3.5 h-3.5 text-slate-500" />
+              <span>Backend Config</span>
+            </button>
+          )}
           {isConnected ? (
             <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-2xs">
               <span className="w-2 h-2 rounded-full bg-emerald-500 mr-1.5 animate-pulse"></span>
@@ -123,21 +138,33 @@ export default function WhatsAppConnection({
           <>
             <div className="text-xs text-rose-800">
               <p className="font-bold text-sm">WhatsApp service unavailable</p>
-              <p className="text-rose-600 text-[11px] whitespace-pre-line mt-0.5">
-                Please start/reconnect the WhatsApp service.
+              <p className="text-rose-600 text-[11px] whitespace-pre-line mt-0.5 font-medium">
+                Backend is not reachable.
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => {
-                setIsModalOpen(true);
-                onRefreshQr();
-              }}
-              className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl shadow-xs transition-colors flex items-center space-x-1.5"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              <span>Retry Connection</span>
-            </button>
+            <div className="flex items-center space-x-2">
+              <button
+                type="button"
+                onClick={() => {
+                  if (onRetry) onRetry();
+                  else if (onRefreshQr) onRefreshQr();
+                }}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl shadow-xs transition-colors flex items-center space-x-1.5 cursor-pointer"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Retry Connection</span>
+              </button>
+              {onOpenBackendConfig && (
+                <button
+                  type="button"
+                  onClick={onOpenBackendConfig}
+                  className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-xl transition-colors flex items-center space-x-1.5 cursor-pointer border border-slate-200"
+                >
+                  <Settings className="w-3.5 h-3.5" />
+                  <span>Configure URL</span>
+                </button>
+              )}
+            </div>
           </>
         ) : isInitializing || isWaitingForQr ? (
           <>
@@ -265,7 +292,7 @@ export default function WhatsAppConnection({
                   <div className="flex flex-col items-center justify-center space-y-2 text-slate-600 p-4">
                     <AlertCircle className="w-10 h-10 text-rose-600" />
                     <p className="text-sm font-bold text-rose-800">WhatsApp service unavailable</p>
-                    <p className="text-xs text-slate-400">Please start/reconnect the WhatsApp service.</p>
+                    <p className="text-xs text-slate-500 font-medium">Backend is not reachable.</p>
                   </div>
                 ) : (
                   <div className="flex flex-col items-center justify-center space-y-2 text-slate-500 p-4">
@@ -285,19 +312,37 @@ export default function WhatsAppConnection({
 
                 <div className="flex items-center justify-center space-x-3 pt-1">
                   {isError ? (
-                    <button
-                      type="button"
-                      onClick={onRefreshQr}
-                      className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl shadow-xs transition-colors inline-flex items-center space-x-1.5"
-                    >
-                      <RefreshCw className="w-3.5 h-3.5" />
-                      <span>Retry Connection</span>
-                    </button>
+                    <div className="flex items-center space-x-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (onRetry) onRetry();
+                          else if (onRefreshQr) onRefreshQr();
+                        }}
+                        className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl shadow-xs transition-colors inline-flex items-center space-x-1.5 cursor-pointer"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        <span>Retry Connection</span>
+                      </button>
+                      {onOpenBackendConfig && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsModalOpen(false);
+                            onOpenBackendConfig();
+                          }}
+                          className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-xl transition-colors inline-flex items-center space-x-1.5 cursor-pointer border border-slate-200"
+                        >
+                          <Settings className="w-3.5 h-3.5" />
+                          <span>Configure URL</span>
+                        </button>
+                      )}
+                    </div>
                   ) : (
                     <button
                       type="button"
                       onClick={onRefreshQr}
-                      className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-colors inline-flex items-center space-x-1.5"
+                      className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-colors inline-flex items-center space-x-1.5 cursor-pointer"
                     >
                       <RefreshCw className="w-3.5 h-3.5" />
                       <span>Refresh QR</span>

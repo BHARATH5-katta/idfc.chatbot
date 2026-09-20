@@ -93,7 +93,15 @@ class WhatsAppService {
   }
 
   getStatus() {
+    let statusFormatted = 'disconnected';
+    if (this.state === ConnectionState.CONNECTED) statusFormatted = 'connected';
+    else if (this.state === ConnectionState.QR_READY) statusFormatted = 'qr_ready';
+    else if (this.state === ConnectionState.INITIALIZING || this.state === ConnectionState.WAITING_FOR_QR) statusFormatted = 'initializing';
+    else if (this.state === ConnectionState.AUTHENTICATING) statusFormatted = 'authenticating';
+    else if (this.state === ConnectionState.ERROR) statusFormatted = 'error';
+
     return {
+      status: statusFormatted,
       state: this.state,
       connected: this.state === ConnectionState.CONNECTED,
       qr: this.state === ConnectionState.QR_READY ? this.qrDataUrl : null,
@@ -107,6 +115,7 @@ class WhatsAppService {
 
   getQr() {
     return {
+      status: this.state === ConnectionState.QR_READY ? 'qr_ready' : 'unavailable',
       state: this.state,
       qr: this.qrDataUrl,
       rawQr: this.rawQr
@@ -132,7 +141,7 @@ class WhatsAppService {
     this.qrDataUrl = null;
 
     console.log('[WhatsApp] Starting client');
-    console.log('[WhatsApp] Initializing browser');
+    console.log('[WhatsApp] Browser starting');
     this.state = ConnectionState.INITIALIZING;
     this.notify();
 

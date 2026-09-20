@@ -57,10 +57,12 @@ router.get('/qr', (req, res) => {
 
 // POST /api/whatsapp/connect
 router.post('/connect', async (req, res) => {
+  console.log('[WhatsApp] API request received');
   try {
     const status = await whatsappService.connect();
     res.json({ success: true, status });
   } catch (err) {
+    console.error('[WhatsApp] API connect error:', err.stack || err.message || err);
     res.status(500).json({ error: err.message });
   }
 });
