@@ -1,0 +1,7 @@
+﻿node_modules/
+.env
+uploads/
+*.xlsx
+*.xls
+*.csv
+customer-data/
