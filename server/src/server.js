@@ -5,6 +5,7 @@ import * as XLSX from 'xlsx';
 import { whatsappService } from './services/whatsappService.js';
 import { campaignQueue } from './services/campaignQueue.js';
 import { parseCustomerFile, sanitizePhoneNumber, maskPhoneNumber } from './services/fileParser.js';
+import whatsappRouter from './routes/whatsapp.js';
 
 process.on('unhandledRejection', (reason) => {
   console.warn('⚠️ Server unhandledRejection caught:', reason?.message || reason);
@@ -66,7 +67,7 @@ app.use(
     credentials: true
   })
 );
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 
 // In-memory upload storage for Excel/CSV parsing
 const upload = multer({
@@ -74,7 +75,7 @@ const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
 });
 
-// SSE Client Connections registry
+// SSE Client Connections registry for campaign
 const sseClients = new Set();
 
 // Broadcast to all connected SSE clients
@@ -106,16 +107,18 @@ app.get('/api/campaign/stream', (req, res) => {
   });
 });
 
-// Health Check Endpoint
+// Health Check Endpoint (Direct root-level access)
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    service: 'whatsapp-backend'
+    service: 'whatsapp-backend',
+    whatsappState: whatsappService.state,
+    connected: whatsappService.state === 'CONNECTED',
+    timestamp: new Date().toISOString()
   });
 });
 
-import whatsappRouter from './routes/whatsapp.js';
-
+// Mount WhatsApp Router
 app.use('/api/whatsapp', whatsappRouter);
 
 // Send Test Message (Mandatory Pre-requisite for Starting Campaign)
@@ -175,7 +178,7 @@ app.post('/api/upload', upload.single('file'), (req, res) => {
       duplicatesCount: parsed.duplicatesCount,
       sampleCustomers: parsed.customers.slice(0, 5),
       invalidSample: parsed.invalidRows,
-      approvedMessage: whatsappService.config.customMessage
+      approvedMessage: whatsappService.customMessage
     });
   } catch (err) {
     res.status(400).json({ error: err.message || 'Error processing customer file' });
@@ -215,7 +218,7 @@ app.post('/api/sample-data', (req, res) => {
       success: true,
       validRecipients: sampleCustomers.length,
       sampleCustomers: sampleCustomers.slice(0, 5),
-      approvedMessage: whatsappService.config.customMessage
+      approvedMessage: whatsappService.customMessage
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -248,9 +251,16 @@ app.get('/api/download-sample', (req, res) => {
 // Campaign Controls
 app.post('/api/campaign/start', (req, res) => {
   try {
-    const { authorizationConfirmed } = req.body;
+    const { authorizationConfirmed, customers, customMessage } = req.body;
     if (!authorizationConfirmed) {
       return res.status(403).json({ error: 'User authorization required. Please confirm you are authorized to contact these pre-qualified customers.' });
+    }
+
+    // Load customer array if sent by client
+    if (Array.isArray(customers) && customers.length > 0) {
+      campaignQueue.loadCustomers(customers, customMessage);
+    } else if (customMessage) {
+      campaignQueue.setCustomMessage(customMessage);
     }
 
     const state = campaignQueue.start();
@@ -287,7 +297,81 @@ app.get('/api/campaign/status', (req, res) => {
   res.json(campaignQueue.getState());
 });
 
-// Only listen when executed directly, not when imported as a Vercel serverless function
+// Interactive Test Mode: Dispatch real interactive message with buttons to test number
+app.post('/api/campaign/test-interactive', async (req, res) => {
+  try {
+    const { testPhoneNumber, testName = 'Authorized Test Recipient' } = req.body;
+    if (!testPhoneNumber) {
+      return res.status(400).json({ error: 'Please enter a test phone number.' });
+    }
+
+    const { valid, phone, reason } = sanitizePhoneNumber(testPhoneNumber);
+    if (!valid) {
+      return res.status(400).json({ error: `Invalid test phone number: ${reason}` });
+    }
+
+    const sendResult = await whatsappService.sendInteractiveLoanMessage({
+      to: phone,
+      customerName: testName,
+      isPrequalified: true
+    });
+
+    campaignQueue.setTestVerified(true);
+    campaignQueue.addLog('success', `Interactive test message with buttons dispatched to ${maskPhoneNumber(phone)}.`);
+
+    res.json({
+      success: true,
+      result: sendResult,
+      maskedPhone: maskPhoneNumber(phone),
+      message: 'Interactive test message dispatched! You can now test tapping Interested or Not Interested on WhatsApp.'
+    });
+  } catch (err) {
+    campaignQueue.addLog('error', `Interactive test failed: ${err.message}`);
+    res.status(400).json({ error: err.message || 'Failed to dispatch interactive test message' });
+  }
+});
+
+// Simulate customer response (for Test Mode & Verification)
+app.post('/api/campaign/simulate-reply', async (req, res) => {
+  try {
+    const { phone, text, isInteractive = true } = req.body;
+    if (!phone || !text) {
+      return res.status(400).json({ error: 'Phone number and reply text are required.' });
+    }
+
+    const result = await campaignQueue.simulateCustomerReply({
+      phone,
+      text,
+      isInteractive
+    });
+
+    res.json({
+      success: true,
+      result,
+      state: campaignQueue.getState()
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get individual customer conversation history
+app.get('/api/campaign/customer/:phone/history', (req, res) => {
+  try {
+    const history = campaignQueue.getCustomerHistory(req.params.phone);
+    res.json({ success: true, history });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Reset Campaign & Responses
+app.post('/api/campaign/reset', (req, res) => {
+  campaignQueue.reset();
+  res.json({ success: true, state: campaignQueue.getState() });
+});
+
+// Direct execution entrypoint
 const isDirectRun = process.argv[1] && (
   process.argv[1].endsWith('server.js') || 
   process.argv[1].endsWith('server')
@@ -295,9 +379,8 @@ const isDirectRun = process.argv[1] && (
 
 if (isDirectRun && !process.env.VERCEL) {
   app.listen(PORT, () => {
-    console.log(`🚀 IDFC WhatsApp Campaign Server running on http://localhost:${PORT}`);
+    console.log(`🚀 IDFC WhatsApp Persistent Server running on http://localhost:${PORT}`);
   });
 }
 
 export default app;
-

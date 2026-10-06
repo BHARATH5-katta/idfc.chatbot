@@ -2,11 +2,13 @@ import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import WhatsAppConnection from './components/WhatsAppConnection';
 import BackendConfigModal from './components/BackendConfigModal';
+import BackendSetupCard from './components/BackendSetupCard';
+import CustomerResponsesCard from './components/CustomerResponsesCard';
+import ConversationHistoryModal from './components/ConversationHistoryModal';
 import {
   CheckCircle2,
   AlertCircle,
   Upload,
-  FileSpreadsheet,
   ShieldCheck,
   Send,
   RotateCcw
@@ -91,6 +93,13 @@ export default function App() {
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef(null);
 
+  // Customer Responses & Interactive Test State
+  const [activeFilter, setActiveFilter] = useState('all');
+  const [selectedChatCustomer, setSelectedChatCustomer] = useState(null);
+  const [isTestMode, setIsTestMode] = useState(false);
+  const [testPhoneNumber, setTestPhoneNumber] = useState('');
+  const [isSendingTest, setIsSendingTest] = useState(false);
+
   // WhatsApp Message Confirmation State
   const [isMessageConfirmed, setIsMessageConfirmed] = useState(false);
 
@@ -103,7 +112,11 @@ export default function App() {
     total: 0,
     sent: 0,
     failed: 0,
-    remaining: 0
+    remaining: 0,
+    interested: 0,
+    notInterested: 0,
+    humanFollowup: 0,
+    noResponse: 0
   });
 
   const [notification, setNotification] = useState(null);
@@ -225,6 +238,35 @@ export default function App() {
       }
     }
 
+    // Fetch initial campaign status if backend is available
+    const fetchCampaignStatus = async () => {
+      const campUrl = getApiUrl('/api/campaign/status');
+      if (!campUrl) return;
+      try {
+        const res = await fetch(campUrl);
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data.customers) && data.customers.length > 0) {
+            setCustomers(data.customers);
+          }
+          if (data.stats) {
+            setCampaignStats(prev => ({
+              ...prev,
+              ...data.stats
+            }));
+          }
+          if (data.status === 'running') {
+            setCampaignStatus('sending');
+          } else if (data.status === 'completed') {
+            setCampaignStatus('completed');
+          }
+        }
+      } catch {
+        // Backend not reachable
+      }
+    };
+    fetchCampaignStatus();
+
     // Campaign SSE stream listener
     let campaignEventSource = null;
     const campaignStreamUrl = getApiUrl('/api/campaign/stream');
@@ -236,26 +278,35 @@ export default function App() {
             const data = JSON.parse(event.data);
             if (data.status === 'running') {
               setCampaignStatus('sending');
-              setCampaignStats({
-                total: data.stats?.total || 0,
-                sent: data.stats?.sent || 0,
-                failed: data.stats?.failed || 0,
-                remaining: data.stats?.remaining || 0
-              });
-              if (Array.isArray(data.customers)) {
-                setCustomers(data.customers);
-              }
             } else if (data.status === 'completed') {
               setCampaignStatus('completed');
+            }
+
+            if (data.stats) {
               setCampaignStats({
-                total: data.stats?.total || 0,
-                sent: data.stats?.sent || 0,
-                failed: data.stats?.failed || 0,
-                remaining: 0
+                total: data.stats.total || 0,
+                sent: data.stats.sent || 0,
+                failed: data.stats.failed || 0,
+                remaining: data.stats.remaining || 0,
+                interested: data.stats.interested || 0,
+                notInterested: data.stats.notInterested || 0,
+                humanFollowup: data.stats.humanFollowup || 0,
+                noResponse: data.stats.noResponse !== undefined ? data.stats.noResponse : 0
               });
-              if (Array.isArray(data.customers)) {
-                setCustomers(data.customers);
-              }
+            }
+
+            if (Array.isArray(data.customers)) {
+              setCustomers(data.customers);
+              // If a chat modal is currently open, keep it updated
+              setSelectedChatCustomer((current) => {
+                if (!current) return null;
+                const fresh = data.customers.find((c) => {
+                  const cClean = String(c.phone || '').replace(/\D/g, '');
+                  const selClean = String(current.phone || '').replace(/\D/g, '');
+                  return cClean === selClean || cClean.endsWith(selClean) || selClean.endsWith(cClean);
+                });
+                return fresh || current;
+              });
             }
           } catch (err) {
             console.error('Error parsing Campaign SSE data:', err);
@@ -475,39 +526,226 @@ export default function App() {
     setCampaignStatus('sending');
 
     try {
-      const res = await fetch(getApiUrl('/api/campaign/start'), {
+      const startUrl = getApiUrl('/api/campaign/start');
+      if (!startUrl) {
+        showNotification('error', 'Persistent backend is not reachable. Please connect your backend.');
+        setCampaignStatus('idle');
+        return;
+      }
+
+      const res = await fetch(startUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           authorizationConfirmed: true,
-          bypassTest: true
+          bypassTest: true,
+          customers: customers,
+          customMessage: APPROVED_MESSAGE
         })
       });
 
       if (res.ok) {
+        const data = await res.json();
+        if (data.state && Array.isArray(data.state.customers)) {
+          setCustomers(data.state.customers);
+        }
         showNotification('success', 'Sending WhatsApp messages via linked device...');
         return;
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        showNotification('error', errData.error || 'Failed to dispatch campaign.');
+        setCampaignStatus('idle');
       }
-    } catch {
-      showNotification('error', 'Failed to communicate with campaign server.');
+    } catch (err) {
+      showNotification('error', `Campaign dispatch error: ${err.message || 'Server offline'}`);
       setCampaignStatus('idle');
     }
   };
 
+  // View customer isolated chat transcript
+  const handleViewChat = async (customer) => {
+    setSelectedChatCustomer(customer);
+    const historyUrl = getApiUrl(`/api/campaign/customer/${encodeURIComponent(customer.phone)}/history`);
+    if (historyUrl) {
+      try {
+        const res = await fetch(historyUrl);
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data.history)) {
+            setSelectedChatCustomer((prev) => (prev ? { ...prev, conversationHistory: data.history } : null));
+            setCustomers((prev) =>
+              prev.map((c) => {
+                const cClean = String(c.phone || '').replace(/\D/g, '');
+                const targetClean = String(customer.phone || '').replace(/\D/g, '');
+                if (cClean === targetClean || cClean.endsWith(targetClean) || targetClean.endsWith(cClean)) {
+                  return { ...c, conversationHistory: data.history };
+                }
+                return c;
+              })
+            );
+          }
+        }
+      } catch {
+        // fallback to existing customer history
+      }
+    }
+  };
+
+  // Test Interactive message with buttons to single phone
+  const handleSendTestInteractive = async () => {
+    if (!testPhoneNumber.trim()) {
+      showNotification('error', 'Please enter a test phone number.');
+      return;
+    }
+    if (!isConnected) {
+      showNotification('error', 'WhatsApp is not connected. Please connect WhatsApp first.');
+      return;
+    }
+    setIsSendingTest(true);
+    try {
+      const url = getApiUrl('/api/campaign/test-interactive');
+      if (!url) {
+        showNotification('error', 'Backend is not reachable.');
+        setIsSendingTest(false);
+        return;
+      }
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          phone: testPhoneNumber,
+          isPrequalified: true
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showNotification('success', `Test interactive message dispatched to ${testPhoneNumber}! Check WhatsApp.`);
+      } else {
+        showNotification('error', data.error || 'Failed to dispatch test message.');
+      }
+    } catch (err) {
+      showNotification('error', `Test error: ${err.message}`);
+    } finally {
+      setIsSendingTest(false);
+    }
+  };
+
+  // Simulate Customer Response (Interactive Button tap or text reply)
+  const handleSimulateReply = async (phone, text, isInteractive = true) => {
+    if (!phone) {
+      showNotification('error', 'No customer selected to simulate response.');
+      return;
+    }
+    try {
+      const url = getApiUrl('/api/campaign/simulate-reply');
+      if (!url) {
+        showNotification('error', 'Backend is not reachable.');
+        return;
+      }
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone, text, isInteractive })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        const updated = data.customer;
+        setCustomers((prev) =>
+          prev.map((c) => {
+            const cClean = String(c.phone || '').replace(/\D/g, '');
+            const uClean = String(updated.phone || '').replace(/\D/g, '');
+            if (cClean === uClean || cClean.endsWith(uClean) || uClean.endsWith(cClean)) {
+              return updated;
+            }
+            return c;
+          })
+        );
+
+        setSelectedChatCustomer((current) => {
+          if (!current) return null;
+          const sClean = String(current.phone || '').replace(/\D/g, '');
+          const uClean = String(updated.phone || '').replace(/\D/g, '');
+          if (sClean === uClean || sClean.endsWith(uClean) || uClean.endsWith(sClean)) {
+            return updated;
+          }
+          return current;
+        });
+
+        if (data.stats) {
+          setCampaignStats((prev) => ({
+            ...prev,
+            interested: data.stats.interested,
+            notInterested: data.stats.notInterested,
+            humanFollowup: data.stats.humanFollowup,
+            noResponse: data.stats.noResponse !== undefined ? data.stats.noResponse : prev.noResponse
+          }));
+        }
+
+        const intentBadge =
+          data.intent === 'INTERESTED'
+            ? '🟢 Interested'
+            : data.intent === 'NOT_INTERESTED'
+            ? '⚪ Not Interested'
+            : '🟡 Human Follow-up Required';
+        showNotification(
+          'success',
+          `Simulated reply: ${intentBadge}. Auto-reply: "${data.autoReplySent?.slice(0, 35)}..."`
+        );
+      } else {
+        showNotification('error', data.error || 'Failed to simulate reply.');
+      }
+    } catch (err) {
+      showNotification('error', `Simulation error: ${err.message}`);
+    }
+  };
+
   // Reset Campaign
-  const handleReset = () => {
+  const handleReset = async () => {
     if (simulationTimerRef.current) clearInterval(simulationTimerRef.current);
     setCampaignStatus('idle');
-    setCustomers((prev) => prev.map((c) => ({ ...c, status: 'pending' })));
+    setCustomers((prev) =>
+      prev.map((c) => ({
+        ...c,
+        status: 'pending',
+        response: 'NO_RESPONSE',
+        optedOut: false,
+        conversationHistory: []
+      }))
+    );
     setCampaignStats({
       total: customers.length,
       sent: 0,
       failed: 0,
-      remaining: customers.length
+      remaining: customers.length,
+      interested: 0,
+      notInterested: 0,
+      humanFollowup: 0,
+      noResponse: customers.length
     });
+    const url = getApiUrl('/api/campaign/reset');
+    if (url) {
+      try {
+        await fetch(url, { method: 'POST' });
+      } catch {
+        // Backend offline
+      }
+    }
   };
 
-  const isConnected = waConnection.connected || waConnection.state === 'Connected';
+  const normState = String(waConnection.state || waConnection.status || '').toUpperCase().trim();
+  const isConnected = waConnection.connected || normState === 'CONNECTED';
+  const isInitializing = normState === 'INITIALIZING' || normState === 'WAITING FOR QR' || normState === 'WAITING_FOR_QR';
+  const isQrReady = normState === 'QR_READY' || normState === 'QR READY';
+  const isAuthenticating = normState === 'AUTHENTICATING';
+  const isError = normState === 'ERROR';
+  const isBackendUnreachable = isError && (
+    !backendUrl ||
+    waConnection.error?.includes('not reachable') ||
+    waConnection.error?.includes('unavailable') ||
+    waConnection.error?.includes('Failed to fetch')
+  );
+  const isDisconnected = normState === 'DISCONNECTED' || (!isConnected && !isInitializing && !isQrReady && !isAuthenticating && !isError);
+
   const hasCustomers = customers.length > 0;
   const isSendEnabled = isConnected && hasCustomers && isMessageConfirmed && campaignStatus !== 'sending';
 
@@ -564,22 +802,22 @@ export default function App() {
                 <span className="w-2 h-2 rounded-full bg-emerald-500 mr-1.5 animate-pulse"></span>
                 🟢 Connected
               </span>
-            ) : waConnection.state === 'Initializing' || waConnection.state === 'Waiting for QR' ? (
+            ) : isInitializing ? (
               <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200">
                 <span className="w-2 h-2 rounded-full bg-amber-500 mr-1.5 animate-pulse"></span>
                 🟡 Connecting
               </span>
-            ) : waConnection.state === 'QR Ready' ? (
+            ) : isQrReady ? (
               <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-800 border border-amber-300">
                 <span className="w-2 h-2 rounded-full bg-amber-500 mr-1.5"></span>
                 📱 Scan QR
               </span>
-            ) : waConnection.state === 'Authenticating' ? (
+            ) : isAuthenticating ? (
               <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-blue-50 text-blue-700 border border-blue-200">
                 <span className="w-2 h-2 rounded-full bg-blue-500 mr-1.5 animate-pulse"></span>
                 🔵 Authenticating
               </span>
-            ) : waConnection.state === 'Error' ? (
+            ) : isError ? (
               <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200">
                 <span className="w-2 h-2 rounded-full bg-rose-500 mr-1.5"></span>
                 ⚠️ Error
@@ -596,9 +834,18 @@ export default function App() {
 
       {/* Main Container */}
       <main className="flex-1 max-w-4xl w-full mx-auto p-4 sm:p-6 space-y-6">
+        {/* If persistent backend is not reachable or unconfigured, show dedicated setup screen */}
+        {isBackendUnreachable && (
+          <BackendSetupCard
+            backendUrl={backendUrl}
+            onSaveBackendUrl={handleSaveBackendUrl}
+            onRetry={() => fetchWhatsAppStatus()}
+          />
+        )}
+
         {/* 2. WhatsApp Connection Card (Using Real WhatsApp Web Session) */}
         <WhatsAppConnection
-          connectionState={waConnection.state}
+          connectionState={normState || waConnection.state}
           qrData={waConnection.qr}
           accountInfo={waConnection.accountInfo}
           errorMessage={waConnection.error}
@@ -612,103 +859,34 @@ export default function App() {
           setIsModalOpen={setIsQrModalOpen}
         />
 
-        {/* 3. Customer List Card */}
-        <section className="bg-white rounded-2xl border border-slate-200 shadow-xs p-5 sm:p-6 space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div>
-              <h2 className="text-base font-bold text-slate-900">Customer List</h2>
-              <p className="text-xs text-slate-500">
-                Upload your pre-qualified loan customers in Excel (.xlsx), CSV (.csv), or JSON (.json) format
-              </p>
-            </div>
+        {/* Hidden file input for spreadsheet/JSON upload */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".xlsx,.xls,.csv,.json"
+          className="hidden"
+          onChange={handleFileUpload}
+        />
 
-            <div>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".xlsx,.xls,.csv,.json"
-                className="hidden"
-                onChange={handleFileUpload}
-              />
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={isUploading || campaignStatus === 'sending'}
-                className="w-full sm:w-auto px-4 py-2.5 bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold rounded-xl shadow-xs transition-colors flex items-center justify-center space-x-2 disabled:opacity-50"
-              >
-                <Upload className="w-4 h-4" />
-                <span>{hasCustomers ? 'Upload New Customer List' : 'Upload Customer List'}</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Success Banner */}
-          {uploadSuccessMessage && (
-            <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center space-x-2 text-xs font-semibold text-emerald-800">
-              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-              <span>{uploadSuccessMessage}</span>
-            </div>
-          )}
-
-          {/* Customer Table */}
-          {hasCustomers ? (
-            <div className="border border-slate-200 rounded-xl overflow-hidden">
-              <div className="max-h-72 overflow-y-auto">
-                <table className="w-full text-left text-xs">
-                  <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200 sticky top-0 z-10">
-                    <tr>
-                      <th className="py-2.5 px-3 w-12 text-center">#</th>
-                      <th className="py-2.5 px-4 font-bold">Customer Name</th>
-                      <th className="py-2.5 px-4 font-bold">Phone Number</th>
-                      <th className="py-2.5 px-4 font-bold text-right">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {customers.map((c, index) => (
-                      <tr key={c.id || index} className="hover:bg-slate-50/80 transition-colors">
-                        <td className="py-2.5 px-3 text-center text-slate-400 font-mono text-[11px]">
-                          {index + 1}
-                        </td>
-                        <td className="py-2.5 px-4 font-semibold text-slate-900">{c.name}</td>
-                        <td className="py-2.5 px-4 font-mono text-slate-600">
-                          {c.maskedPhone || maskPhone(c.phone)}
-                        </td>
-                        <td className="py-2.5 px-4 text-right">
-                          <span
-                            className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
-                              c.status === 'sent'
-                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                : c.status === 'sending'
-                                ? 'bg-blue-50 text-blue-700 border border-blue-200 animate-pulse'
-                                : c.status === 'failed'
-                                ? 'bg-rose-50 text-rose-700 border border-rose-200'
-                                : 'bg-slate-100 text-slate-600 border border-slate-200'
-                            }`}
-                          >
-                            {c.status === 'sent' && '✓ Sent'}
-                            {c.status === 'sending' && 'Sending...'}
-                            {c.status === 'failed' && '✕ Failed'}
-                            {c.status === 'pending' && 'Pending'}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          ) : (
-            <div className="border border-dashed border-slate-300 rounded-xl p-6 text-center text-xs text-slate-500 space-y-1">
-              <FileSpreadsheet className="w-8 h-8 text-slate-400 mx-auto mb-2" />
-              <p className="font-semibold text-slate-700">No customer list loaded</p>
-              <p className="text-[11px] text-slate-400">
-                Click <strong>Upload Customer List</strong> above to load your Excel, CSV, or JSON file with{' '}
-                <code className="bg-slate-100 px-1 py-0.5 rounded">Name</code> and{' '}
-                <code className="bg-slate-100 px-1 py-0.5 rounded">Phone Number</code>.
-              </p>
-            </div>
-          )}
-        </section>
+        {/* 3. Customer Responses & Outreach Tracking Card */}
+        <CustomerResponsesCard
+          customers={customers}
+          stats={campaignStats}
+          activeFilter={activeFilter}
+          setActiveFilter={setActiveFilter}
+          onViewChat={handleViewChat}
+          onSimulateReply={handleSimulateReply}
+          isTestMode={isTestMode}
+          setIsTestMode={setIsTestMode}
+          testPhoneNumber={testPhoneNumber}
+          setTestPhoneNumber={setTestPhoneNumber}
+          onSendTestInteractive={handleSendTestInteractive}
+          isSendingTest={isSendingTest}
+          onUploadClick={() => fileInputRef.current?.click()}
+          isUploading={isUploading}
+          uploadSuccessMessage={uploadSuccessMessage}
+          campaignStatus={campaignStatus}
+        />
 
         {/* 4. WhatsApp Message Card */}
         <section className="bg-white rounded-2xl border border-slate-200 shadow-xs p-5 sm:p-6 space-y-4">
@@ -887,6 +1065,13 @@ export default function App() {
         currentUrl={backendUrl}
         defaultEnvUrl={import.meta.env.VITE_WHATSAPP_BACKEND_URL || ''}
         onSave={handleSaveBackendUrl}
+      />
+
+      {/* Customer Conversation History Modal */}
+      <ConversationHistoryModal
+        customer={selectedChatCustomer}
+        isOpen={!!selectedChatCustomer}
+        onClose={() => setSelectedChatCustomer(null)}
       />
     </div>
   );

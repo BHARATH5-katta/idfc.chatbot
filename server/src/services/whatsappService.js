@@ -5,6 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
+import { sanitizePhoneNumber } from './fileParser.js';
 
 dotenv.config();
 
@@ -16,16 +17,24 @@ const SESSION_PATH = process.env.WHATSAPP_SESSION_PATH
   ? path.resolve(process.cwd(), process.env.WHATSAPP_SESSION_PATH)
   : path.resolve(__dirname, '../../whatsapp-session');
 
-// Helper to locate Chrome/Edge on Windows
+// Helper to locate Chrome/Edge/Chromium on Windows, Linux, and macOS
 function getChromeExecutablePath() {
   if (process.env.PUPPETEER_EXECUTABLE_PATH) {
     return process.env.PUPPETEER_EXECUTABLE_PATH;
   }
   const candidates = [
+    // Windows
     'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
     'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
     'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-    'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe'
+    'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+    // Linux / Docker / Cloud VPS
+    '/usr/bin/google-chrome-stable',
+    '/usr/bin/google-chrome',
+    '/usr/bin/chromium-browser',
+    '/usr/bin/chromium',
+    // macOS
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
   ];
   for (const candidate of candidates) {
     try {
@@ -39,16 +48,15 @@ function getChromeExecutablePath() {
   return undefined;
 }
 
-// Exactly the connection states requested by the user:
-// Disconnected | Initializing | Waiting for QR | QR Ready | Authenticating | Connected | Error
+// Exactly the connection states requested:
+// DISCONNECTED | INITIALIZING | QR_READY | AUTHENTICATING | CONNECTED | ERROR
 export const ConnectionState = {
-  DISCONNECTED: 'Disconnected',
-  INITIALIZING: 'Initializing',
-  WAITING_FOR_QR: 'Waiting for QR',
-  QR_READY: 'QR Ready',
-  AUTHENTICATING: 'Authenticating',
-  CONNECTED: 'Connected',
-  ERROR: 'Error'
+  DISCONNECTED: 'DISCONNECTED',
+  INITIALIZING: 'INITIALIZING',
+  QR_READY: 'QR_READY',
+  AUTHENTICATING: 'AUTHENTICATING',
+  CONNECTED: 'CONNECTED',
+  ERROR: 'ERROR'
 };
 
 class WhatsAppService {
@@ -62,6 +70,7 @@ class WhatsAppService {
     this.qrTimeout = null;
     this.listeners = new Set();
     this.isStarting = false;
+    this.onCustomerResponseCallback = null;
 
     this.customMessage =
       'You are pre-qualified for an IDFC FIRST Bank loan. If you’re interested, please contact me.';
@@ -72,6 +81,25 @@ class WhatsAppService {
       }
     } catch (e) {
       console.warn('[WhatsApp] Session directory creation warning:', e.message);
+    }
+  }
+
+  // Register callback for incoming customer messages / button replies
+  onCustomerResponse(callback) {
+    this.onCustomerResponseCallback = callback;
+  }
+
+  // Configuration getter/setter for compatibility
+  get config() {
+    return {
+      customMessage: this.customMessage,
+      isDemoMode: false
+    };
+  }
+
+  setCustomMessage(msg) {
+    if (msg && typeof msg === 'string') {
+      this.customMessage = msg;
     }
   }
 
@@ -93,15 +121,8 @@ class WhatsAppService {
   }
 
   getStatus() {
-    let statusFormatted = 'disconnected';
-    if (this.state === ConnectionState.CONNECTED) statusFormatted = 'connected';
-    else if (this.state === ConnectionState.QR_READY) statusFormatted = 'qr_ready';
-    else if (this.state === ConnectionState.INITIALIZING || this.state === ConnectionState.WAITING_FOR_QR) statusFormatted = 'initializing';
-    else if (this.state === ConnectionState.AUTHENTICATING) statusFormatted = 'authenticating';
-    else if (this.state === ConnectionState.ERROR) statusFormatted = 'error';
-
     return {
-      status: statusFormatted,
+      status: this.state, // 'DISCONNECTED' | 'INITIALIZING' | 'QR_READY' | 'AUTHENTICATING' | 'CONNECTED' | 'ERROR'
       state: this.state,
       connected: this.state === ConnectionState.CONNECTED,
       qr: this.state === ConnectionState.QR_READY ? this.qrDataUrl : null,
@@ -115,20 +136,22 @@ class WhatsAppService {
 
   getQr() {
     return {
-      status: this.state === ConnectionState.QR_READY ? 'qr_ready' : 'unavailable',
+      status: this.state === ConnectionState.QR_READY ? 'QR_READY' : 'UNAVAILABLE',
       state: this.state,
       qr: this.qrDataUrl,
       rawQr: this.rawQr
     };
   }
 
-  // Initialize and connect real WhatsApp Web client
+  // Initialize and connect single real WhatsApp Web client
   async connect() {
+    // If already connected, return current status immediately
     if (this.state === ConnectionState.CONNECTED && this.client) {
       return this.getStatus();
     }
 
-    if (this.isStarting) {
+    // If currently initializing or waiting for scan, do not duplicate
+    if (this.isStarting || this.state === ConnectionState.INITIALIZING || this.state === ConnectionState.QR_READY) {
       return this.getStatus();
     }
 
@@ -156,6 +179,7 @@ class WhatsAppService {
         console.log(`[WhatsApp] Browser executable: ${executablePath}`);
       }
 
+      // Initialize single WhatsApp Web client
       this.client = new Client({
         authStrategy: new LocalAuth({
           clientId: 'idfc_loan_client',
@@ -179,7 +203,6 @@ class WhatsAppService {
       });
 
       console.log('[WhatsApp] Waiting for QR');
-      this.state = ConnectionState.WAITING_FOR_QR;
       this.notify();
 
       // 60-second QR Generation Timeout Guard
@@ -190,7 +213,7 @@ class WhatsAppService {
         ) {
           console.error('[WhatsApp] Error: Timeout waiting for WhatsApp QR code');
           this.state = ConnectionState.ERROR;
-          this.lastError = 'WhatsApp service unavailable. Please start/reconnect the WhatsApp service.';
+          this.lastError = 'WhatsApp service unavailable. Timeout generating QR code.';
           this.notify();
           this.destroyClient().catch(() => {});
         }
@@ -275,7 +298,59 @@ class WhatsAppService {
         this.notify();
       });
 
-      // Event 4: Authentication failure
+      // Event 4: Customer incoming message / Button reply
+      this.client.on('message', async (msg) => {
+        try {
+          if (msg.fromMe) return; // Do not process self outgoing messages
+          if (msg.isGroupMsg) return; // Ignore groups
+
+          const sender = msg.from;
+          const cleanPhone = sender.replace('@c.us', '').replace(/\D/g, '');
+          const body = (msg.body || '').trim();
+          const msgType = msg.type || 'chat';
+
+          console.log(`[WhatsApp] Incoming message from ${cleanPhone} (type: ${msgType}): "${body}"`);
+
+          if (typeof this.onCustomerResponseCallback === 'function') {
+            await this.onCustomerResponseCallback({
+              phone: cleanPhone,
+              text: body,
+              msgType,
+              rawMessage: msg
+            });
+          }
+        } catch (err) {
+          console.error('[WhatsApp] Incoming message handler error:', err);
+        }
+      });
+
+      // Event 5: Poll vote update (when customer taps an option in native Poll)
+      this.client.on('vote_update', async (vote) => {
+        try {
+          const sender = vote.voter || vote.from;
+          if (!sender) return;
+          const cleanPhone = String(sender).replace('@c.us', '').replace(/\D/g, '');
+          const selectedOption = Array.isArray(vote.selectedOptions) && vote.selectedOptions.length > 0
+            ? vote.selectedOptions[0]?.name || vote.selectedOptions[0]
+            : null;
+
+          if (selectedOption) {
+            console.log(`[WhatsApp] Incoming poll vote from ${cleanPhone}: "${selectedOption}"`);
+            if (typeof this.onCustomerResponseCallback === 'function') {
+              await this.onCustomerResponseCallback({
+                phone: cleanPhone,
+                text: selectedOption,
+                msgType: 'poll',
+                rawVote: vote
+              });
+            }
+          }
+        } catch (err) {
+          console.error('[WhatsApp] Incoming poll vote error:', err);
+        }
+      });
+
+      // Event 6: Authentication failure
       this.client.on('auth_failure', (msg) => {
         if (this.qrTimeout) {
           clearTimeout(this.qrTimeout);
@@ -290,7 +365,7 @@ class WhatsAppService {
         this.notify();
       });
 
-      // Event 5: Disconnected
+      // Event 7: Disconnected
       this.client.on('disconnected', async (reason) => {
         console.log('[WhatsApp] Disconnected:', reason);
         this.state = ConnectionState.DISCONNECTED;
@@ -312,7 +387,7 @@ class WhatsAppService {
       this.client.initialize().catch((initErr) => {
         console.error('[WhatsApp] Error during initialize:', initErr?.message || initErr);
         this.state = ConnectionState.ERROR;
-        this.lastError = 'WhatsApp service unavailable. Please start/reconnect the WhatsApp service.';
+        this.lastError = `WhatsApp initialization error: ${initErr?.message || 'Failed to start browser'}`;
         this.isStarting = false;
         this.notify();
       });
@@ -322,7 +397,7 @@ class WhatsAppService {
     } catch (err) {
       console.error('[WhatsApp] Error launching client:', err?.message || err);
       this.state = ConnectionState.ERROR;
-      this.lastError = 'WhatsApp service unavailable. Please start/reconnect the WhatsApp service.';
+      this.lastError = `Failed to start WhatsApp client: ${err?.message || err}`;
       this.isStarting = false;
       this.notify();
       return this.getStatus();
@@ -350,7 +425,7 @@ class WhatsAppService {
 
   // Explicit user disconnect
   async disconnect() {
-    console.log('[WhatsApp] Disconnected');
+    console.log('[WhatsApp] Disconnected (manual logout)');
     try {
       if (this.client) {
         const c = this.client;
@@ -382,22 +457,129 @@ class WhatsAppService {
     return this.connect();
   }
 
-  // Send real WhatsApp message
+  // Send initial approved loan message with native interactive options (✅ Interested / ❌ Not Interested)
+  async sendInteractiveLoanMessage({ to, customerName = '', isPrequalified = true }) {
+    if (this.state !== ConnectionState.CONNECTED || !this.client) {
+      throw new Error('WhatsApp is not connected. Please scan the QR code to pair your device.');
+    }
+
+    const { valid, phone } = sanitizePhoneNumber(to);
+    const targetPhone = valid ? phone : String(to).replace(/\D/g, '');
+    if (!targetPhone) {
+      throw new Error(`Invalid phone number: ${to}`);
+    }
+
+    let chatId = `${targetPhone}@c.us`;
+    try {
+      if (typeof this.client.getNumberId === 'function') {
+        const numberId = await this.client.getNumberId(targetPhone);
+        if (numberId && numberId._serialized) {
+          chatId = numberId._serialized;
+        }
+      }
+    } catch (e) {
+      console.warn(`[WhatsApp] Warning resolving numberId for ${targetPhone}:`, e.message);
+    }
+
+    // Only use "pre-qualified" wording when data supports that claim
+    const initialText = isPrequalified
+      ? 'You are pre-qualified for an IDFC FIRST Bank loan. If you’re interested, please contact me.'
+      : 'Information regarding IDFC FIRST Bank loan options. If you’re interested, please contact me.';
+
+    console.log(`[WhatsApp] Dispatching interactive loan message to ${chatId}...`);
+
+    let sentResult = null;
+    let methodUsed = 'poll';
+
+    // Strategy 1: Native Buttons (WhatsApp Web buttons class)
+    try {
+      const { Buttons } = pkg;
+      if (Buttons) {
+        const buttonsMsg = new Buttons(
+          initialText,
+          [
+            { id: 'btn_interested', body: '✅ Interested' },
+            { id: 'btn_not_interested', body: '❌ Not Interested' }
+          ],
+          'IDFC FIRST Bank',
+          'Please select an option'
+        );
+        sentResult = await this.client.sendMessage(chatId, buttonsMsg);
+        methodUsed = 'buttons';
+      }
+    } catch (btnErr) {
+      console.log(`[WhatsApp] Buttons unavailable on current WhatsApp version (${btnErr.message}), using native Poll.`);
+    }
+
+    // Strategy 2: Native WhatsApp Poll (supported across 100% of WhatsApp Multi-Device platforms)
+    if (!sentResult) {
+      try {
+        const { Poll } = pkg;
+        if (Poll) {
+          const pollMsg = new Poll(
+            `${initialText}\n\nAre you interested?`,
+            ['✅ Interested', '❌ Not Interested'],
+            { pollCount: 1 }
+          );
+          sentResult = await this.client.sendMessage(chatId, pollMsg);
+          methodUsed = 'poll';
+        }
+      } catch (pollErr) {
+        console.log(`[WhatsApp] Poll send error (${pollErr.message}), using structured interactive prompt.`);
+      }
+    }
+
+    // Strategy 3: Structured interactive prompt fallback
+    if (!sentResult) {
+      const fallbackText = `${initialText}\n\n*Please reply with one of the options below:*\n1️⃣ *✅ Interested*\n2️⃣ *❌ Not Interested*`;
+      sentResult = await this.client.sendMessage(chatId, fallbackText);
+      methodUsed = 'text_structured';
+    }
+
+    return {
+      success: true,
+      messageId: sentResult?.id?._serialized || sentResult?.id?.id || `msg_${Date.now()}`,
+      to: chatId,
+      method: methodUsed,
+      initialText,
+      timestamp: new Date().toISOString()
+    };
+  }
+
+  // Send simple text WhatsApp message (for auto-replies)
   async sendMessage({ to, customerName = '', messageType = 'template', customMessage = null }) {
     if (this.state !== ConnectionState.CONNECTED || !this.client) {
       throw new Error('WhatsApp is not connected. Please scan the QR code to pair your device.');
     }
 
-    const messageText = customMessage || this.customMessage;
-    const cleanDigits = String(to).replace(/\D/g, '');
-    const chatId = cleanDigits.includes('@c.us') ? cleanDigits : `${cleanDigits}@c.us`;
+    const { valid, phone } = sanitizePhoneNumber(to);
+    const targetPhone = valid ? phone : String(to).replace(/\D/g, '');
+    if (!targetPhone) {
+      throw new Error(`Invalid phone number: ${to}`);
+    }
 
-    console.log(`[WhatsApp] Dispatching message to ${chatId}...`);
+    const messageText = customMessage || this.customMessage;
+
+    console.log(`[WhatsApp] Resolving recipient ${targetPhone}...`);
+    let chatId = `${targetPhone}@c.us`;
+    try {
+      if (typeof this.client.getNumberId === 'function') {
+        const numberId = await this.client.getNumberId(targetPhone);
+        if (numberId && numberId._serialized) {
+          chatId = numberId._serialized;
+        }
+      }
+    } catch (e) {
+      console.warn(`[WhatsApp] Warning resolving numberId for ${targetPhone}:`, e.message);
+    }
+
+    console.log(`[WhatsApp] Dispatching text message to ${chatId}...`);
     const sent = await this.client.sendMessage(chatId, messageText);
 
     return {
       success: true,
       messageId: sent?.id?._serialized || sent?.id?.id || `msg_${Date.now()}`,
+      to: chatId,
       timestamp: new Date().toISOString()
     };
   }

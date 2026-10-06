@@ -18,7 +18,18 @@ whatsappService.subscribe((status) => {
   }
 });
 
+// GET /api/whatsapp/health
+router.get('/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    service: 'whatsapp-backend',
+    whatsappState: whatsappService.state,
+    connected: whatsappService.state === 'CONNECTED'
+  });
+});
+
 // SSE endpoint for real-time WhatsApp QR & Connection status
+// GET /api/whatsapp/stream
 router.get('/stream', (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -41,6 +52,7 @@ router.get('/status', (req, res) => {
     const status = whatsappService.getStatus();
     res.json(status);
   } catch (err) {
+    console.error('[WhatsApp] Status route error:', err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -51,13 +63,14 @@ router.get('/qr', (req, res) => {
     const qrData = whatsappService.getQr();
     res.json(qrData);
   } catch (err) {
+    console.error('[WhatsApp] QR route error:', err);
     res.status(500).json({ error: err.message });
   }
 });
 
 // POST /api/whatsapp/connect
 router.post('/connect', async (req, res) => {
-  console.log('[WhatsApp] API request received');
+  console.log('[WhatsApp] API request received: POST /connect');
   try {
     const status = await whatsappService.connect();
     res.json({ success: true, status });
@@ -69,29 +82,54 @@ router.post('/connect', async (req, res) => {
 
 // POST /api/whatsapp/disconnect
 router.post('/disconnect', async (req, res) => {
+  console.log('[WhatsApp] API request received: POST /disconnect');
   try {
     const status = await whatsappService.disconnect();
     res.json({ success: true, status });
   } catch (err) {
+    console.error('[WhatsApp] API disconnect error:', err.stack || err.message || err);
     res.status(500).json({ error: err.message });
   }
 });
 
 // POST /api/whatsapp/refresh-qr & POST /api/whatsapp/reconnect
 router.post('/refresh-qr', async (req, res) => {
+  console.log('[WhatsApp] API request received: POST /refresh-qr');
   try {
     const status = await whatsappService.refreshQr();
     res.json({ success: true, status });
   } catch (err) {
+    console.error('[WhatsApp] API refresh-qr error:', err.stack || err.message || err);
     res.status(500).json({ error: err.message });
   }
 });
 
 router.post('/reconnect', async (req, res) => {
+  console.log('[WhatsApp] API request received: POST /reconnect');
   try {
     const status = await whatsappService.refreshQr();
     res.json({ success: true, status });
   } catch (err) {
+    console.error('[WhatsApp] API reconnect error:', err.stack || err.message || err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/whatsapp/send
+router.post('/send', async (req, res) => {
+  try {
+    const { to, message, customerName } = req.body;
+    if (!to) {
+      return res.status(400).json({ error: 'Recipient phone number is required.' });
+    }
+    const result = await whatsappService.sendMessage({
+      to,
+      customerName: customerName || '',
+      customMessage: message
+    });
+    res.json({ success: true, result });
+  } catch (err) {
+    console.error('[WhatsApp] API send error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
