@@ -227,7 +227,7 @@ class WhatsAppService {
         }
 
         console.log('[WhatsApp] QR received');
-        console.log('[WhatsApp] Waiting for scan');
+        console.log('[WhatsApp] QR code active on dashboard');
         this.rawQr = qr;
         this.state = ConnectionState.QR_READY;
         this.lastError = null;
