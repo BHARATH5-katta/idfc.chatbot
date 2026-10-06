@@ -27,11 +27,12 @@ export default function WhatsAppConnection({
 }) {
   const normState = String(connectionState || '').toUpperCase().trim();
   const isConnected = normState === 'CONNECTED';
-  const isInitializing = normState === 'INITIALIZING' || normState === 'WAITING FOR QR' || normState === 'WAITING_FOR_QR';
+  const isInitializing = normState === 'INITIALIZING';
+  const isWaitingForQr = normState === 'WAITING FOR QR' || normState === 'WAITING_FOR_QR';
   const isQrReady = normState === 'QR_READY' || normState === 'QR READY';
   const isAuthenticating = normState === 'AUTHENTICATING';
   const isError = normState === 'ERROR';
-  const isDisconnected = normState === 'DISCONNECTED' || (!isConnected && !isInitializing && !isQrReady && !isAuthenticating && !isError);
+  const isDisconnected = normState === 'DISCONNECTED' || (!isConnected && !isInitializing && !isWaitingForQr && !isQrReady && !isAuthenticating && !isError);
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5 sm:p-6 space-y-4">
