@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import WhatsAppConnection from './components/WhatsAppConnection';
 import BackendConfigModal from './components/BackendConfigModal';
-import BackendSetupCard from './components/BackendSetupCard';
 import CustomerResponsesCard from './components/CustomerResponsesCard';
 import ConversationHistoryModal from './components/ConversationHistoryModal';
 import {
@@ -17,7 +16,7 @@ import {
 const APPROVED_MESSAGE =
   'You are pre-qualified for an IDFC FIRST Bank loan. If you’re interested, please contact me.';
 
-// Persistent Node.js backend configuration (supports localStorage override and Vercel build-time env)
+// Persistent Node.js backend configuration (supports localStorage override, Vercel build-time env, or local loopback)
 function getInitialBackendUrl() {
   if (typeof window !== 'undefined') {
     const override = localStorage.getItem('whatsapp_backend_url');
@@ -25,7 +24,7 @@ function getInitialBackendUrl() {
       return override.trim().replace(/\/+$/, '');
     }
   }
-  return (import.meta.env.VITE_WHATSAPP_BACKEND_URL || '').trim().replace(/\/+$/, '');
+  return (import.meta.env.VITE_WHATSAPP_BACKEND_URL || 'http://localhost:5000').trim().replace(/\/+$/, '');
 }
 
 function sanitizeErrorMessage(msg) {
@@ -60,8 +59,7 @@ export default function App() {
 
   const getApiUrl = (endpoint) => {
     if (backendUrl) return `${backendUrl}${endpoint}`;
-    if (import.meta.env.DEV) return endpoint; // In local dev Vite proxy forward
-    return null;
+    return endpoint;
   };
 
   const handleSaveBackendUrl = (newUrl) => {
@@ -132,17 +130,7 @@ export default function App() {
     const activeUrl = overrideUrl !== undefined ? overrideUrl : backendUrl;
     const url = activeUrl
       ? `${activeUrl}/api/whatsapp/status`
-      : (import.meta.env.DEV ? '/api/whatsapp/status' : null);
-
-    if (!url) {
-      setWaConnection((prev) => ({
-        ...prev,
-        state: 'Error',
-        connected: false,
-        error: 'Backend is not reachable.'
-      }));
-      return;
-    }
+      : '/api/whatsapp/status';
 
     try {
       const res = await fetch(url);
@@ -834,15 +822,6 @@ export default function App() {
 
       {/* Main Container */}
       <main className="flex-1 max-w-4xl w-full mx-auto p-4 sm:p-6 space-y-6">
-        {/* If persistent backend is not reachable or unconfigured, show dedicated setup screen */}
-        {isBackendUnreachable && (
-          <BackendSetupCard
-            backendUrl={backendUrl}
-            onSaveBackendUrl={handleSaveBackendUrl}
-            onRetry={() => fetchWhatsAppStatus()}
-          />
-        )}
-
         {/* 2. WhatsApp Connection Card (Using Real WhatsApp Web Session) */}
         <WhatsAppConnection
           connectionState={normState || waConnection.state}
